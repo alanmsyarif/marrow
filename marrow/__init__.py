@@ -1,6 +1,6 @@
 """Marrow: GPU tetrahedral soft body for Blender."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # bpy is imported inside register()/unregister(), not at module scope. Any
 # `from .core.x import ...` executes this file first, so a top-level
