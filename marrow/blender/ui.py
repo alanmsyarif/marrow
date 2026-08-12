@@ -20,6 +20,15 @@ class MarrowColliderSlot(bpy.types.PropertyGroup):
         ],
         default="SPHERE",
     )
+    sticky: bpy.props.BoolProperty(
+        name="Sticky",
+        description=(
+            "Material that touches this collider is held to the surface and "
+            "dragged along as the collider moves, instead of only being "
+            "pushed out of it"
+        ),
+        default=False,
+    )
 
 
 class MARROW_UL_colliders(bpy.types.UIList):
@@ -29,6 +38,7 @@ class MARROW_UL_colliders(bpy.types.UIList):
         sub = row.row(align=True)
         sub.enabled = item.object is not None
         sub.prop(item, "shape", text="")
+        sub.prop(item, "sticky", text="", icon="SNAP_ON", toggle=True)
 
 
 class MarrowSettings(bpy.types.PropertyGroup):
@@ -95,8 +105,10 @@ class MarrowSettings(bpy.types.PropertyGroup):
     tear_threshold: bpy.props.FloatProperty(
         name="Tear Strain",
         description=(
-            "Stretch ratio at which material tears. 1.5 means it fails at "
-            "50 percent strain. Lower is more brittle"
+            "Largest stretch ratio material survives. 1.5 means a tet fails "
+            "once anything in it is pulled to 1.5x its rest length, in any "
+            "direction. Lower is more brittle. Volume-preserving squashing "
+            "stretches sideways and counts, so a heavy press can tear too"
         ),
         default=1.5,
         min=1.01,
@@ -104,6 +116,18 @@ class MarrowSettings(bpy.types.PropertyGroup):
     )
     colliders: bpy.props.CollectionProperty(type=MarrowColliderSlot)
     active_collider: bpy.props.IntProperty(default=0)
+    stick_break: bpy.props.FloatProperty(
+        name="Stick Break",
+        description=(
+            "How far the material may drag a sticky contact point before it "
+            "lets go. Zero never lets go. Tune it against the shot - the "
+            "distance a contact settles at depends on Stiffness and Substeps"
+        ),
+        default=0.0,
+        min=0.0,
+        soft_max=1.0,
+        unit="LENGTH",
+    )
     ground_z: bpy.props.FloatProperty(
         name="Ground Height",
         description="Height of the ground plane in world units",
@@ -168,6 +192,9 @@ class MARROW_PT_panel(bpy.types.Panel):
         col.operator("marrow.collider_remove", icon="REMOVE", text="")
         if not settings.colliders:
             box.label(text="Add an object to collide against", icon="INFO")
+        row = box.row()
+        row.enabled = any(slot.sticky and slot.object for slot in settings.colliders)
+        row.prop(settings, "stick_break")
 
         from . import handlers
 

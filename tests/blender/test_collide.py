@@ -10,13 +10,19 @@ from marrow.gpu.textures import download, flush, make_flush_shader, upload
 
 gpu.init()
 
-IMAGES = [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"})]
+IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"}),
+]
 PUSH = [
     ("FLOAT", "ground_z"),
     ("INT", "kind"),
     ("INT", "n_nodes"),
     ("MAT4", "to_local"),
     ("MAT4", "to_world"),
+    ("INT", "collider_id"),
+    ("INT", "sticky"),
+    ("FLOAT", "break_dist"),
 ]
 IDENTITY = Matrix.Identity(4)
 
@@ -31,11 +37,15 @@ def _run_collide(positions, inv_mass, ground_z, ground_on):
     if ground_on:
         shader.bind()
         shader.image("p", tex_p)
+        shader.image("stick", upload(np.zeros_like(pack_nodes(positions, inv_mass))))
         shader.uniform_float("ground_z", ground_z)
         shader.uniform_int("kind", 0)
         shader.uniform_int("n_nodes", n)
         shader.uniform_float("to_local", IDENTITY)
         shader.uniform_float("to_world", IDENTITY)
+        shader.uniform_int("collider_id", 0)
+        shader.uniform_int("sticky", 0)
+        shader.uniform_float("break_dist", 1.0e30)
         gpu.compute.dispatch(shader, (n + 63) // 64, 1, 1)
 
     # Without this the readback intermittently returns the pre-dispatch

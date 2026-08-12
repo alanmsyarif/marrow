@@ -27,7 +27,7 @@ class MarrowSession:
     """Owns the GPU state and the baked cache for one object."""
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
-                 collider_objects=None, tear_threshold=0.0):
+                 collider_objects=None, tear_threshold=0.0, stick_break=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -37,6 +37,7 @@ class MarrowSession:
         self.ground_on = bool(ground_on)
         self.collider_objects = list(collider_objects or [])
         self.tear_threshold = float(tear_threshold)
+        self.stick_break = float(stick_break)
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
         self.live = False
@@ -63,7 +64,7 @@ class MarrowSession:
         self._build_solver()
 
     def _collider_specs(self):
-        """(kind, to_local, to_world) per collider, sampled at the current frame.
+        """(kind, to_local, to_world, sticky) per collider, at the current frame.
 
         Primitives are unit-sized in local space, so the object transform is
         the whole description - position, orientation and size all come from
@@ -71,12 +72,16 @@ class MarrowSession:
         """
         specs = []
         for entry in self.collider_objects:
-            collider, shape = entry if isinstance(entry, tuple) else (entry, "SPHERE")
+            if isinstance(entry, tuple):
+                collider, shape = entry[0], entry[1]
+                sticky = bool(entry[2]) if len(entry) > 2 else False
+            else:
+                collider, shape, sticky = entry, "SPHERE", False
             if collider is None:
                 continue
             kind = 1 if shape == "SPHERE" else 2
             world = collider.matrix_world.copy()
-            specs.append((kind, world.inverted(), world))
+            specs.append((kind, world.inverted(), world, sticky))
         return specs
 
     def _build_solver(self) -> None:
@@ -88,6 +93,7 @@ class MarrowSession:
             ground_on=self.ground_on,
             colliders=self._collider_specs(),
             tear_threshold=self.tear_threshold,
+            stick_break=self.stick_break,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -117,6 +123,7 @@ class MarrowSession:
         self.tear_threshold = (
             float(settings.tear_threshold) if settings.tearing_enabled else 0.0
         )
+        self.stick_break = float(settings.stick_break)
         from .ops import collider_objects_of
 
         self.collider_objects = collider_objects_of(obj)

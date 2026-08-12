@@ -26,9 +26,11 @@ import numpy as np
 
 from ..core.coloring import color_tets
 from ..core.layout import (
+    color_order,
     color_ordered,
     pack_nodes,
     pack_rest,
+    pack_scalar,
     pack_tets,
     texture_shape,
     unpack_vec3,
@@ -73,21 +75,26 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
-                 colliders=None, tear_threshold=0.0):
+                 colliders=None, tear_threshold=0.0, stick_break=0.0):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
         self.ground_on = bool(ground_on)
-        # Each entry is (kind, to_local, to_world) with kind 1 sphere, 2 box.
+        # Each entry is (kind, to_local, to_world) with kind 1 sphere, 2 box,
+        # optionally followed by a sticky flag.
         self.colliders = list(colliders or [])
         self.tear_threshold = float(tear_threshold)
+        self.stick_break = float(stick_break)
         self.n_nodes = mesh.n_nodes
+
+        start = self._lift_out_of_ground(mesh.nodes)
 
         colors = color_tets(mesh.tets, mesh.n_nodes)
         ordered, self.offsets = color_ordered(mesh.tets, colors)
-        dm_inv, rest_vol = precompute(mesh.nodes, ordered)
+        self._tet_order = color_order(colors)   # colour-ordered slot -> mesh tet
+        dm_inv, rest_vol = precompute(start, ordered)
 
-        self.tex_x = upload_verified(pack_nodes(mesh.nodes, inv_mass))
+        self.tex_x = upload_verified(pack_nodes(start, inv_mass))
         self.tex_p = blank(self.n_nodes)
         self.tex_v = upload_verified(
             pack_nodes(np.zeros_like(mesh.nodes), np.zeros(self.n_nodes))
@@ -98,6 +105,21 @@ class GPUSolver:
         self.tex_tets_orig = upload_verified(pack_tets(mesh.tets))
         # One flag per tet. Zero means intact; set once, never cleared.
         self.tex_torn = blank(mesh.n_tets, fmt="R32F")
+        # One counter per node: how many of its tets are still intact. The tear
+        # rule reads it to refuse to orphan a node - see SOLVE_SRC. Incidence
+        # is the same whichever tet order it is counted over.
+        self.tex_live = upload_verified(
+            pack_scalar(
+                np.bincount(
+                    np.asarray(mesh.tets, dtype=np.int64).ravel(),
+                    minlength=self.n_nodes,
+                )
+            ),
+            fmt="R32F",
+        )
+        # One texel per node: .xyz the contact point in the holding collider's
+        # local space, .w that collider's id. Zero means the node is free.
+        self.tex_stick = blank(self.n_nodes)
 
         self.sh_predict = kernels.build(
             "predict", kernels.PREDICT_SRC,
@@ -111,16 +133,19 @@ class GPUSolver:
             [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
              ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
              ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
-             ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"})],
+             ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
+             ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"})],
             [("FLOAT", "h"), ("FLOAT", "mu"), ("FLOAT", "lam"),
              ("FLOAT", "tear_threshold"),
              ("INT", "color_begin"), ("INT", "color_end")],
         )
         self.sh_collide = kernels.build(
             "collide", kernels.COLLIDE_SRC,
-            [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"})],
+            [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+             ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"})],
             [("FLOAT", "ground_z"), ("INT", "kind"), ("INT", "n_nodes"),
-             ("MAT4", "to_local"), ("MAT4", "to_world")],
+             ("MAT4", "to_local"), ("MAT4", "to_world"),
+             ("INT", "collider_id"), ("INT", "sticky"), ("FLOAT", "break_dist")],
         )
         # Instance state, never module state - see make_flush_shader.
         self.sh_flush = make_flush_shader("RGBA32F")
@@ -133,6 +158,40 @@ class GPUSolver:
              ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"})],
             [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes")],
         )
+
+    def _lift_out_of_ground(self, nodes: np.ndarray) -> np.ndarray:
+        """Rigidly raise a cage that starts below the ground plane.
+
+        The collide pass depenetrates by moving the predicted position, and
+        integrate then reads that move as velocity: depth / h, where h is
+        dt / substeps. During the simulation that is harmless - a substep can
+        only sink a node by v * h, so the velocity it reads back is the
+        velocity that put it there. The starting state is the one case with
+        no such bound. A unit ball authored straddling the ground plane leaves
+        its first substep at 226 m/s (measured, 10 substeps), which is past
+        any tear threshold and shreds the body into spikes.
+
+        Translating is what makes this safe. Clamping each node onto the plane
+        instead would flatten the buried half, and the elastic energy stored in
+        that pancake launches it nearly as hard - measured 11 m/s and 22 torn
+        tets on the same ball. A translation leaves the rest shape, the bind
+        weights and the tet winding all untouched.
+
+        ponytail: ground plane only. A cage authored inside a sphere or box
+        collider has the same unbounded first substep; depenetrate per
+        collider if that ever comes up.
+        """
+        if not self.ground_on or nodes.shape[0] == 0:
+            return nodes
+        lift = self.ground_z - float(nodes[:, 2].min())
+        if lift <= 0.0:
+            return nodes
+        # Said out loud: the body is not where the user put it any more.
+        print(
+            f"marrow: cage started {lift:.4f} below the ground plane, "
+            f"lifted onto it"
+        )
+        return nodes + np.array([0.0, 0.0, lift])
 
     def step(self) -> None:
         """One frame of params.substeps substeps. Reads nothing back."""
@@ -158,6 +217,7 @@ class GPUSolver:
                 self.sh_solve.image("tets", self.tex_tets)
                 self.sh_solve.image("rest", self.tex_rest)
                 self.sh_solve.image("torn", self.tex_torn)
+                self.sh_solve.image("live", self.tex_live)
                 self.sh_solve.uniform_float("h", h)
                 self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
                 self.sh_solve.uniform_float("mu", self.params.mu)
@@ -189,15 +249,31 @@ class GPUSolver:
         identity = Matrix.Identity(4)
         jobs = []
         if self.ground_on:
-            jobs.append((0, identity, identity))
-        jobs.extend(self.colliders)
+            # The ground never sticks, and it runs first so that a sticky
+            # collider's anchor wins over it rather than the other way round.
+            jobs.append((0, identity, identity, False, 0))
+        for index, entry in enumerate(self.colliders, start=1):
+            kind, to_local, to_world = entry[:3]
+            sticky = bool(entry[3]) if len(entry) > 3 else False
+            # The id is the slot position, not the loop counter, so it stays
+            # the same frame to frame - an anchor recorded last substep has to
+            # still name the same collider this one.
+            jobs.append((kind, to_local, to_world, sticky, index))
 
-        for kind, to_local, to_world in jobs:
+        # Zero means "off" in the panel, but the kernel wants a distance it can
+        # compare against, so an unbreakable hold is a distance nothing reaches.
+        break_dist = self.stick_break if self.stick_break > 0.0 else 1.0e30
+
+        for kind, to_local, to_world, sticky, collider_id in jobs:
             self.sh_collide.bind()
             self.sh_collide.image("p", self.tex_p)
+            self.sh_collide.image("stick", self.tex_stick)
             self.sh_collide.uniform_float("ground_z", self.ground_z)
             self.sh_collide.uniform_int("kind", int(kind))
             self.sh_collide.uniform_int("n_nodes", self.n_nodes)
+            self.sh_collide.uniform_int("collider_id", int(collider_id))
+            self.sh_collide.uniform_int("sticky", 1 if sticky else 0)
+            self.sh_collide.uniform_float("break_dist", break_dist)
             # Must be a mathutils Matrix. A flat 16-float list is accepted
             # without error and silently applies the wrong transform.
             self.sh_collide.uniform_float("to_local", to_local)
@@ -216,12 +292,21 @@ class GPUSolver:
         return _guard_finite(out, "cage nodes", self.n_nodes)
 
     def torn_flags(self) -> np.ndarray:
-        """One flag per tet, 1.0 where the tet has torn. Diagnostic path."""
+        """One flag per tet, 1.0 where torn, in mesh tet order. Diagnostic path."""
         flush(self.sh_flush_r32f, self.tex_torn)
         flat = read_stable(
             self.tex_torn, nudge=lambda: flush(self.sh_flush_r32f, self.tex_torn)
         ).reshape(-1)
-        return flat[: self.mesh.n_tets].astype(np.float64)
+        # The texture stores the volume ratio a tet broke at, not a bare flag,
+        # so anything non-zero is torn. Callers want the flag.
+        ordered_flags = (flat[: self.mesh.n_tets] > 0.0).astype(np.float64)
+        # The solve kernel indexes tets by colour-ordered position, so that is
+        # the order the texture is in. Callers think in mesh order, and the two
+        # only agree when every tet happens to land in colour 0. Anything that
+        # maps a flag back onto mesh.tets needs this.
+        out = np.empty_like(ordered_flags)
+        out[self._tet_order] = ordered_flags
+        return out
 
     def poison_for_test(self) -> None:
         """Force a non-finite state, so the NaN guard can be tested honestly."""

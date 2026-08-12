@@ -27,6 +27,16 @@ def texel_index(i: int) -> tuple[int, int]:
     return (i % TEX_WIDTH, i // TEX_WIDTH)
 
 
+def color_order(colors: np.ndarray) -> np.ndarray:
+    """The permutation that sorts tets into contiguous colour slices.
+
+    Split out so that a caller mapping a colour-ordered result back to mesh tet
+    order uses the same sort color_ordered did, rather than a second copy of it
+    that can drift.
+    """
+    return np.argsort(np.asarray(colors, dtype=np.int32), kind="stable")
+
+
 def color_ordered(tets: np.ndarray, colors: np.ndarray):
     """Permute tets so each colour is one contiguous slice.
 
@@ -41,7 +51,7 @@ def color_ordered(tets: np.ndarray, colors: np.ndarray):
             np.zeros(1, dtype=np.int32),
         )
 
-    order = np.argsort(colors, kind="stable")
+    order = color_order(colors)
     ordered = np.asarray(tets, dtype=np.int32)[order]
     counts = np.bincount(colors, minlength=int(colors.max()) + 1)
     offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int32)
@@ -66,6 +76,16 @@ def pack_nodes(nodes: np.ndarray, inv_mass: np.ndarray) -> np.ndarray:
     image = _blank(nodes.shape[0])
     values = np.concatenate([nodes, inv_mass[:, None]], axis=1)
     _write(image, values.astype(np.float32))
+    return image
+
+
+def pack_scalar(values: np.ndarray) -> np.ndarray:
+    """One float per element, for a single-channel R32F image."""
+    values = np.asarray(values, dtype=np.float64)
+    count = values.shape[0]
+    width, height = texture_shape(count)
+    image = np.zeros((height, width, 1), dtype=np.float32)
+    image.reshape(-1, 1)[:count, 0] = values.astype(np.float32)
     return image
 
 

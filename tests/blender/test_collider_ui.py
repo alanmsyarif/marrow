@@ -70,12 +70,13 @@ def test_picking_an_object_into_a_slot_reaches_the_solver():
     obj.marrow.colliders[0].object = ball
     obj.marrow.colliders[0].shape = "SPHERE"
 
-    assert collider_objects_of(obj) == [(ball, "SPHERE")]
+    assert collider_objects_of(obj) == [(ball, "SPHERE", False)]
     session = MarrowSession(obj)
     session.refresh_from_object()
     session._build_solver()
     assert len(session.solver.colliders) == 1
-    kind, _to_local, _to_world = session.solver.colliders[0]
+    kind, _to_local, _to_world, sticky = session.solver.colliders[0]
+    assert sticky is False, "a collider is not sticky until the slot says so"
     assert kind == 1, "SPHERE must reach the kernel as kind 1"
 
 
@@ -90,7 +91,7 @@ def test_an_empty_works_as_a_collider():
     bpy.ops.marrow.collider_add()
     obj.marrow.colliders[0].object = empty
     obj.marrow.colliders[0].shape = "BOX"
-    assert collider_objects_of(obj) == [(empty, "BOX")]
+    assert collider_objects_of(obj) == [(empty, "BOX", False)]
 
 
 def test_an_empty_slot_is_skipped_not_an_error():

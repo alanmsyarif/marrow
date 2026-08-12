@@ -16,13 +16,19 @@ from marrow.gpu.textures import download, flush, make_flush_shader, upload
 
 gpu.init()
 
-IMAGES = [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"})]
+IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"}),
+]
 PUSH = [
     ("FLOAT", "ground_z"),
     ("INT", "kind"),
     ("INT", "n_nodes"),
     ("MAT4", "to_local"),
     ("MAT4", "to_world"),
+    ("INT", "collider_id"),
+    ("INT", "sticky"),
+    ("FLOAT", "break_dist"),
 ]
 
 SPHERE, BOX = 1, 2
@@ -36,14 +42,19 @@ def _collide(points, kind, xform, inv_mass=None):
 
     shader = build("collide", COLLIDE_SRC, IMAGES, PUSH)
     tex_p = upload(pack_nodes(points, inv_mass))
+    tex_stick = upload(np.zeros_like(pack_nodes(points, inv_mass)))
 
     shader.bind()
     shader.image("p", tex_p)
+    shader.image("stick", tex_stick)
     shader.uniform_float("ground_z", 0.0)
     shader.uniform_int("kind", kind)
     shader.uniform_int("n_nodes", n)
     shader.uniform_float("to_local", xform.inverted())
     shader.uniform_float("to_world", xform)
+    shader.uniform_int("collider_id", 1)
+    shader.uniform_int("sticky", 0)
+    shader.uniform_float("break_dist", 1.0e30)
     gpu.compute.dispatch(shader, (n + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)

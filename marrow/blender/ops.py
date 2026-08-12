@@ -72,6 +72,11 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
         cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
         context.collection.objects.link(cage_obj)
         cage_obj.parent = obj
+        # Cage nodes are stored in world space. Assigning .parent in Python
+        # leaves matrix_parent_inverse at identity, so the body's transform
+        # gets applied on top and the cage draws in the wrong place - the
+        # operator does this for you, plain assignment does not.
+        cage_obj.matrix_parent_inverse = obj.matrix_world.inverted()
         cage_obj.display_type = "WIRE"
         cage_obj.hide_render = True
         cage_obj.hide_select = True
@@ -93,7 +98,7 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
 
 
 def collider_objects_of(obj):
-    """(object, shape) for each usable collider slot on ``obj``.
+    """(object, shape, sticky) for each usable collider slot on ``obj``.
 
     Empty slots and a body pointed at itself are skipped rather than treated
     as errors - both are just a half-finished edit in the list.
@@ -102,7 +107,7 @@ def collider_objects_of(obj):
     for slot in obj.marrow.colliders:
         if slot.object is None or slot.object is obj:
             continue
-        pairs.append((slot.object, slot.shape))
+        pairs.append((slot.object, slot.shape, slot.sticky))
     return pairs
 
 
@@ -161,6 +166,7 @@ class MARROW_OT_bake(bpy.types.Operator):
                 tear_threshold=(
                     float(settings.tear_threshold) if settings.tearing_enabled else 0.0
                 ),
+                stick_break=float(settings.stick_break),
             )
         except ValueError as exc:
             self.report({"ERROR"}, str(exc))
