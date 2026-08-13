@@ -75,7 +75,7 @@ def test_picking_an_object_into_a_slot_reaches_the_solver():
     session.refresh_from_object()
     session._build_solver()
     assert len(session.solver.colliders) == 1
-    kind, _to_local, _to_world, sticky = session.solver.colliders[0]
+    kind, _to_local, _to_world, sticky, _field = session.solver.colliders[0]
     assert sticky is False, "a collider is not sticky until the slot says so"
     assert kind == 1, "SPHERE must reach the kernel as kind 1"
 

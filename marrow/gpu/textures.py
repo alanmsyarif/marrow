@@ -30,6 +30,20 @@ def upload(image: np.ndarray, fmt: str = "RGBA32F") -> gpu.types.GPUTexture:
     return gpu.types.GPUTexture((width, height), format=fmt, data=buffer)
 
 
+def upload3d(field: np.ndarray, fmt: str = "R32F") -> gpu.types.GPUTexture:
+    """Create a 3D texture from a (nz, ny, nx) array.
+
+    C-order ravel puts x fastest, which is the order the sampler indexes
+    ivec3(x, y, z) in - verified bit-exact on a round trip through a kernel.
+    """
+    array = np.ascontiguousarray(field, dtype=np.float32)
+    if array.ndim != 3:
+        raise ValueError(f"a 3D texture needs an (nz, ny, nx) array, got {array.shape}")
+    nz, ny, nx = array.shape
+    buffer = gpu.types.Buffer("FLOAT", array.size, array.ravel().tolist())
+    return gpu.types.GPUTexture((nx, ny, nz), format=fmt, data=buffer)
+
+
 _FLUSH_SRC = """
 void main()
 {

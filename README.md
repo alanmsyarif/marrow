@@ -72,6 +72,15 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 
 ### Colliders
 
+Each slot picks an object and how to treat it. **Mesh** is the default and uses the object's actual shape, so anything works — a bowl, a hand, a floor with a lip. **Sphere** and **Box** are cheaper and exactly round or square, for when the shape really is one.
+
+A mesh collider is baked once into a signed distance field, in the object's own local space. That means moving, rotating and scaling it costs nothing — the field rides the transform exactly as the primitives do. It also means concavity works properly: a node in the hole of a torus is correctly outside the solid, which a bounding box or a convex hull would get wrong.
+
+The field's grid tracks your **Resolution**, since it only needs to resolve detail the cage can represent. There is no separate setting.
+
+**A deforming collider is not re-baked.** Shape keys, an armature or Geometry Nodes on the collider are captured once when the simulation starts and never revisited. Transform animation is free; deformation is not.
+
+
 Colliders belong to the body being simulated, so you set them up without leaving it. In **Simulation > Colliders**, press **+**, pick an object in the slot, and choose **Sphere** or **Box**. Press **-** to remove the selected slot.
 
 The shape is a unit primitive driven entirely by the picked object's transform, so a default Blender sphere or cube maps exactly, and position, rotation and scale all animate. An **Empty works just as well as a mesh**, and is often tidier: a primitive collider needs a transform and nothing else.
@@ -159,7 +168,8 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 
 ## Limitations
 
-- **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Analytic colliders are sphere, box and ground plane only.
+- **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Collision against a *collider* is a distance field and does not have this limit.
+- **A deforming collider is baked once**, and features thinner than one SDF cell are missed. See [Colliders](#colliders).
 - **No friction anywhere.** Contact only ever separates, so bodies slide against each other and against themselves freely.
 - **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.

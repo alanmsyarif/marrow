@@ -5,25 +5,21 @@ from mathutils import Matrix
 from _oracle_harness import CUBE
 from marrow.core.layout import pack_nodes, unpack_vec3
 from marrow.core.solver_ref import make_state
-from marrow.gpu.kernels import COLLIDE_SRC, build
-from marrow.gpu.textures import download, flush, make_flush_shader, upload
+from marrow.gpu.kernels import COLLIDE_IMAGES, COLLIDE_PUSH, COLLIDE_SRC, build
+from marrow.gpu.textures import (
+    download,
+    flush,
+    make_flush_shader,
+    upload,
+    upload3d,
+)
 
 gpu.init()
 
-IMAGES = [
-    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
-    ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"}),
-]
-PUSH = [
-    ("FLOAT", "ground_z"),
-    ("INT", "kind"),
-    ("INT", "n_nodes"),
-    ("MAT4", "to_local"),
-    ("MAT4", "to_world"),
-    ("INT", "collider_id"),
-    ("INT", "sticky"),
-    ("FLOAT", "break_dist"),
-]
+# Shared with the solver. Three copies of these lists used to exist, and
+# adding the sdf image broke the two that were not the real one.
+IMAGES, PUSH = COLLIDE_IMAGES, COLLIDE_PUSH
+SDF_DUMMY = upload3d(np.zeros((1, 1, 1), dtype=np.float32))
 IDENTITY = Matrix.Identity(4)
 
 
@@ -38,6 +34,7 @@ def _run_collide(positions, inv_mass, ground_z, ground_on):
         shader.bind()
         shader.image("p", tex_p)
         shader.image("stick", upload(np.zeros_like(pack_nodes(positions, inv_mass))))
+        shader.image("sdf", SDF_DUMMY)
         shader.uniform_float("ground_z", ground_z)
         shader.uniform_int("kind", 0)
         shader.uniform_int("n_nodes", n)

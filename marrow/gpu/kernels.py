@@ -335,6 +335,49 @@ void main()
       // divide by zero and produce NaN.
       lp = (d > 1e-6) ? (lp / d) : vec3(0.0, 0.0, 1.0);
     }
+  } else if (kind == 3) {
+    // Mesh collider. lp is already in grid space: the CPU folded the
+    // bounding-box-to-unit-cube mapping into to_local, so no push constant
+    // had to be added to a block that already overflows its 128 byte budget.
+    ivec3 dim = imageSize(sdf);
+    vec3 g = lp * vec3(dim) - 0.5;
+    vec3 lo = floor(g);
+    ivec3 b = ivec3(lo);
+    if (all(greaterThanEqual(b, ivec3(0))) && all(lessThan(b + 1, dim))) {
+      vec3 f = g - lo;
+      // Trilinear, so the surface is smooth rather than voxel-stepped.
+      float d000 = imageLoad(sdf, b + ivec3(0, 0, 0)).r;
+      float d100 = imageLoad(sdf, b + ivec3(1, 0, 0)).r;
+      float d010 = imageLoad(sdf, b + ivec3(0, 1, 0)).r;
+      float d110 = imageLoad(sdf, b + ivec3(1, 1, 0)).r;
+      float d001 = imageLoad(sdf, b + ivec3(0, 0, 1)).r;
+      float d101 = imageLoad(sdf, b + ivec3(1, 0, 1)).r;
+      float d011 = imageLoad(sdf, b + ivec3(0, 1, 1)).r;
+      float d111 = imageLoad(sdf, b + ivec3(1, 1, 1)).r;
+      float d = mix(mix(mix(d000, d100, f.x), mix(d010, d110, f.x), f.y),
+                    mix(mix(d001, d101, f.x), mix(d011, d111, f.x), f.y), f.z);
+      if (d < 0.0) {
+        inside = true;
+        // The exact gradient of the same trilinear interpolant, from the
+        // eight values already loaded. Central differences were tried first
+        // and are wrong: they evaluate at the cell corner, not at the
+        // sample point, so a node half a cell in from the corner is pushed
+        // diagonally. Measured on a sphere, a node at (0, 0, 0.5) that
+        // should rise straight up came out at (-0.13, -0.13, 0.93).
+        vec3 grad = vec3(
+          mix(mix(d100 - d000, d110 - d010, f.y),
+              mix(d101 - d001, d111 - d011, f.y), f.z),
+          mix(mix(d010 - d000, d110 - d100, f.x),
+              mix(d011 - d001, d111 - d101, f.x), f.z),
+          mix(mix(d001 - d000, d101 - d100, f.x),
+              mix(d011 - d010, d111 - d110, f.x), f.y));
+        float glen = length(grad);
+        // A flat patch of field has no direction to offer; leave the node
+        // where it is rather than divide by zero and poison it with NaN.
+        if (glen > 1e-9) { lp -= grad * (d / glen); }
+        else { inside = false; }
+      }
+    }
   } else if (kind == 2) {
     vec3 a = abs(lp);
     if (a.x < 1.0 && a.y < 1.0 && a.z < 1.0) {
@@ -378,6 +421,25 @@ void main()
 
 
 # `out` is a reserved word in GLSL, so the destination image is `out_pos`.
+# Declared once and shared with the tests. Three copies of this list existed
+# and adding the sdf image broke the two that were not the real one.
+COLLIDE_IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"}),
+    ("R32F", "FLOAT_3D", "sdf", {"READ"}),
+]
+COLLIDE_PUSH = [
+    ("FLOAT", "ground_z"),
+    ("INT", "kind"),
+    ("INT", "n_nodes"),
+    ("MAT4", "to_local"),
+    ("MAT4", "to_world"),
+    ("INT", "collider_id"),
+    ("INT", "sticky"),
+    ("FLOAT", "break_dist"),
+]
+
+
 SELF_COLLIDE_SRC = """
 // Self-collision between surface nodes of the cage. All pairs, Jacobi.
 //

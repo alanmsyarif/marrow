@@ -12,6 +12,7 @@ limit.
 """
 
 import numpy as np
+from mathutils import Matrix
 
 from ..blender.storage import read_bind, read_tetmesh
 from ..core.solver_ref import SolverParams
@@ -41,6 +42,12 @@ class MarrowSession:
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
         self.body_distance = float(body_distance)
+        # Drives the mesh-collider SDF grid: the field only has to resolve
+        # detail the cage can represent, so it tracks Resolution rather than
+        # adding a setting of its own.
+        self.resolution = float(
+            getattr(getattr(obj, "marrow", None), "resolution", 0.25)
+        )
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
         self.live = False
@@ -67,12 +74,21 @@ class MarrowSession:
         self._build_solver()
 
     def _collider_specs(self):
-        """(kind, to_local, to_world, sticky) per collider, at the current frame.
+        """(kind, to_local, to_world, sticky, field) at the current frame.
 
         Primitives are unit-sized in local space, so the object transform is
         the whole description - position, orientation and size all come from
         it and animate for free.
+
+        A mesh collider works the same way, with a signed distance field
+        standing in for the primitive. Its field is baked in local space, so
+        the transform animates it for free too and ``field`` is the same
+        cached array every frame. The bounding-box-to-unit-cube mapping is
+        composed into the matrices here rather than sent as push constants,
+        because the collide kernel's push block already overflows.
         """
+        from . import sdf
+
         specs = []
         for entry in self.collider_objects:
             if isinstance(entry, tuple):
@@ -82,9 +98,23 @@ class MarrowSession:
                 collider, shape, sticky = entry, "SPHERE", False
             if collider is None:
                 continue
-            kind = 1 if shape == "SPHERE" else 2
             world = collider.matrix_world.copy()
-            specs.append((kind, world.inverted(), world, sticky))
+
+            if shape == "MESH":
+                field, grid = sdf.bake(collider, self.resolution)
+                if field is None:
+                    # Nothing to collide against - an empty or curve-only
+                    # object. Skipping beats colliding with a stale shape.
+                    continue
+                grid_m = Matrix([list(row) for row in grid])
+                specs.append(
+                    (3, grid_m @ world.inverted(), world @ grid_m.inverted(),
+                     sticky, field)
+                )
+                continue
+
+            kind = 1 if shape == "SPHERE" else 2
+            specs.append((kind, world.inverted(), world, sticky, None))
         return specs
 
     def _build_solver(self) -> None:
@@ -130,6 +160,7 @@ class MarrowSession:
         )
         self.stick_break = float(settings.stick_break)
         # The panel holds a multiple of Resolution; the solver wants metres.
+        self.resolution = float(settings.resolution)
         thickness = float(settings.self_thickness) * float(settings.resolution)
         self.self_distance = thickness if settings.self_collision else 0.0
         self.body_distance = thickness if settings.body_collision else 0.0

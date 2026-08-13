@@ -15,10 +15,11 @@ class MarrowColliderSlot(bpy.types.PropertyGroup):
         name="Shape",
         description="Collision shape, sized and oriented by the object's transform",
         items=[
+            ("MESH", "Mesh", "The object's own shape, as a signed distance field"),
             ("SPHERE", "Sphere", "Unit sphere shaped by the object transform"),
             ("BOX", "Box", "Unit box shaped by the object transform"),
         ],
-        default="SPHERE",
+        default="MESH",
     )
     sticky: bpy.props.BoolProperty(
         name="Sticky",

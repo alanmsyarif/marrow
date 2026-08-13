@@ -135,6 +135,30 @@ Collider specs carry an optional field array. `_dispatch_colliders` uploads each
 8. A second solver build against the same collider reuses the cached bake.
 9. Concave contact: a node inside a bowl's cavity is pushed to the cavity wall, not out through the bottom.
 
+## Corrections found during implementation
+
+Three things in the sections above were wrong and were fixed against measurement.
+
+### One ray is not enough to sign a densely sampled field
+
+D4 said to reuse `inside_bvh._is_inside` as-is. Baking a UV sphere then measured **113 wrongly signed voxels** at cell 0.1, and a wrong sign is a two-radius error in the field. Coarser grids were *better*, which ruled out resolution as the cause: the single fixed ray miscounts when a sample sits right against a face, and a dense grid puts far more samples there.
+
+`sdf.py` now votes over three non-parallel, non-axis-aligned rays. Wrong signs away from the surface went to zero at every resolution tested, and the field's peak error settled at a uniform 0.0096 - the UV sphere's own faceting.
+
+`inside_bvh._is_inside` is left alone. It has the same latent weakness, but it samples cell centres a whole Resolution apart where it has not been a problem, and changing it would alter cage generation for every existing project.
+
+### Central differences skew the push
+
+The kernel first took its gradient from central differences one texel either side of `b`. That evaluates at the cell *corner* rather than at the interpolated sample point, so a node offset within its cell is pushed diagonally: a node at `(0, 0, 0.5)` inside a unit sphere, which must rise straight up, came out at `(-0.13, -0.13, 0.93)`.
+
+Replaced with the exact analytic gradient of the same trilinear interpolant, derived from the eight corner values already loaded. Fewer texture reads, no clamping, and axis-aligned pushes are now exactly axis-aligned.
+
+This was also the cause of a soft body sinking to z = 0.342 through a sphere collider that the analytic primitive held above 0.5.
+
+### A collider does not have to be a mesh
+
+Mesh is now the default shape, so any object at all can land in a slot. `to_mesh()` raises on an empty, a camera or a light, which would have taken down session build. `_local_bvh` returns nothing for those and the collider is skipped.
+
 ## Ceilings
 
 - **A deforming collider is baked once.** Shape keys, an armature or Geometry Nodes on the collider are captured at build time and never revisited. Transform animation is free; deformation is not. The cache key notices a vertex count change, nothing subtler.

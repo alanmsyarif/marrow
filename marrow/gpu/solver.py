@@ -47,6 +47,7 @@ from ..gpu.textures import (
     read_marked,
     read_stable,
     upload,
+    upload3d,
     upload_verified,
 )
 
@@ -195,12 +196,17 @@ class GPUSolver:
         )
         self.sh_collide = kernels.build(
             "collide", kernels.COLLIDE_SRC,
-            [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
-             ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"})],
-            [("FLOAT", "ground_z"), ("INT", "kind"), ("INT", "n_nodes"),
-             ("MAT4", "to_local"), ("MAT4", "to_world"),
-             ("INT", "collider_id"), ("INT", "sticky"), ("FLOAT", "break_dist")],
+            kernels.COLLIDE_IMAGES, kernels.COLLIDE_PUSH,
         )
+        # Mesh collider fields, keyed by id() of the baked array. The array is
+        # kept in the value so it cannot be collected and have its id reused.
+        # Rebuilt specs hand back the same cached array every frame, so an
+        # animated collider re-uploads nothing.
+        self._sdf_tex: dict = {}
+        # A declared image must be bound at every dispatch, so the analytic
+        # kinds need something to point at.
+        self._sdf_dummy = upload3d(np.zeros((1, 1, 1), dtype=np.float32))
+
         # Instance state, never module state - see make_flush_shader.
         self.sh_flush = make_flush_shader("RGBA32F")
         self.sh_flush_r32f = make_flush_shader("R32F")
@@ -370,6 +376,17 @@ class GPUSolver:
         gpu.compute.dispatch(self.sh_body, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
 
+    def _sdf_for(self, field):
+        """The 3D texture for a baked field, uploaded once and kept."""
+        if field is None:
+            return self._sdf_dummy
+        key = id(field)
+        hit = self._sdf_tex.get(key)
+        if hit is None:
+            hit = (field, upload3d(field))
+            self._sdf_tex[key] = hit
+        return hit[1]
+
     def _dispatch_colliders(self, node_groups) -> None:
         """One dispatch per collider, ground plane included.
 
@@ -384,23 +401,25 @@ class GPUSolver:
         if self.ground_on:
             # The ground never sticks, and it runs first so that a sticky
             # collider's anchor wins over it rather than the other way round.
-            jobs.append((0, identity, identity, False, 0))
+            jobs.append((0, identity, identity, False, 0, None))
         for index, entry in enumerate(self.colliders, start=1):
             kind, to_local, to_world = entry[:3]
             sticky = bool(entry[3]) if len(entry) > 3 else False
+            field = entry[4] if len(entry) > 4 else None
             # The id is the slot position, not the loop counter, so it stays
             # the same frame to frame - an anchor recorded last substep has to
             # still name the same collider this one.
-            jobs.append((kind, to_local, to_world, sticky, index))
+            jobs.append((kind, to_local, to_world, sticky, index, field))
 
         # Zero means "off" in the panel, but the kernel wants a distance it can
         # compare against, so an unbreakable hold is a distance nothing reaches.
         break_dist = self.stick_break if self.stick_break > 0.0 else 1.0e30
 
-        for kind, to_local, to_world, sticky, collider_id in jobs:
+        for kind, to_local, to_world, sticky, collider_id, field in jobs:
             self.sh_collide.bind()
             self.sh_collide.image("p", self.tex_p)
             self.sh_collide.image("stick", self.tex_stick)
+            self.sh_collide.image("sdf", self._sdf_for(field))
             self.sh_collide.uniform_float("ground_z", self.ground_z)
             self.sh_collide.uniform_int("kind", int(kind))
             self.sh_collide.uniform_int("n_nodes", self.n_nodes)
