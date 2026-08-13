@@ -77,14 +77,15 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0):
+                 self_distance=0.0, body_distance=0.0):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
         self.ground_on = bool(ground_on)
-        # An absolute world distance, not the UI's multiple of Resolution.
-        # Zero disables self-collision and allocates nothing.
+        # Absolute world distances, not the UI's multiple of Resolution.
+        # Zero disables the pass and allocates nothing for it.
         self.self_distance = float(self_distance)
+        self.body_distance = float(body_distance)
         # Each entry is (kind, to_local, to_world) with kind 1 sphere, 2 box,
         # optionally followed by a sticky flag.
         self.colliders = list(colliders or [])
@@ -126,8 +127,13 @@ class GPUSolver:
         # local space, .w that collider's id. Zero means the node is free.
         self.tex_stick = blank(self.n_nodes)
 
+        # Both contact passes work on the hull of the cage and share its
+        # textures, so the surface set is built when either one is asked for.
         self.sh_self = None
-        surf = surface_nodes(mesh.tets) if self.self_distance > 0.0 else None
+        self.sh_body = None
+        self.n_surf = 0
+        wants_contact = self.self_distance > 0.0 or self.body_distance > 0.0
+        surf = surface_nodes(mesh.tets) if wants_contact else None
         if surf is not None and surf.shape[0] > 1:
             self.n_surf = int(surf.shape[0])
             # Where each node sits in the surface list, -1 for interior. The
@@ -137,13 +143,16 @@ class GPUSolver:
             idx[surf] = np.arange(self.n_surf)
             self.tex_surf = upload_verified(pack_scalar(surf), fmt="R32F")
             self.tex_surf_idx = upload_verified(pack_scalar(idx), fmt="R32F")
+            self.tex_p2 = blank(self.n_nodes)
+
+        if surf is not None and surf.shape[0] > 1 and self.self_distance > 0.0:
             # Rest node positions. tex_rest is per-tet dm_inv and rest volume;
             # this is the per-node configuration those were built from, which
-            # the rest-distance gate compares against.
+            # the rest-distance gate compares against. Only self-collision has
+            # a rest state to compare to, so only self-collision uploads this.
             self.tex_rest_pos = upload_verified(
                 pack_nodes(start, np.zeros(self.n_nodes))
             )
-            self.tex_p2 = blank(self.n_nodes)
             self.sh_self = kernels.build(
                 "self_collide", kernels.SELF_COLLIDE_SRC,
                 [("RGBA32F", "FLOAT_2D", "p", {"READ"}),
@@ -152,6 +161,18 @@ class GPUSolver:
                  ("R32F", "FLOAT_2D", "surf", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf_idx", {"READ"})],
                 [("FLOAT", "thickness"), ("INT", "n_nodes"), ("INT", "n_surf")],
+            )
+
+        if surf is not None and surf.shape[0] > 1 and self.body_distance > 0.0:
+            self.sh_body = kernels.build(
+                "body_collide", kernels.BODY_COLLIDE_SRC,
+                [("RGBA32F", "FLOAT_2D", "p", {"READ"}),
+                 ("RGBA32F", "FLOAT_2D", "out_p", {"WRITE"}),
+                 ("RGBA32F", "FLOAT_2D", "x_other", {"READ"}),
+                 ("R32F", "FLOAT_2D", "surf_other", {"READ"}),
+                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"})],
+                [("FLOAT", "thickness"), ("INT", "n_nodes"),
+                 ("INT", "n_surf_other")],
             )
 
         self.sh_predict = kernels.build(
@@ -226,50 +247,82 @@ class GPUSolver:
         )
         return nodes + np.array([0.0, 0.0, lift])
 
-    def step(self) -> None:
+    def step(self, others=()) -> None:
         """One frame of params.substeps substeps. Reads nothing back."""
         h = self.params.dt / self.params.substeps
+        for _ in range(self.params.substeps):
+            self.substep(h, others)
+
+    def substep(self, h, others=()) -> None:
+        """One substep. Split out of step() so bodies can be interleaved.
+
+        Two bodies advanced a whole frame at a time only ever see each other's
+        end-of-frame state. At 24fps a body at 5 m/s covers 0.2m in a frame
+        against a default thickness of 0.1m at Resolution 0.1, so it would
+        pass clean through. A group driver calls this on every member in turn,
+        which is why the substep is the unit and not the frame.
+        """
+        self.substep_constraints(h, others)
+        self.substep_integrate(h)
+
+    def substep_constraints(self, h, others=()) -> None:
+        """Everything in a substep except the integration.
+
+        A group runs this on every member before any member integrates. Only
+        integrate writes tex_x, which is what the body-collision pass reads
+        the partner from, so holding it back is what makes every body in the
+        group see the same snapshot of every other.
+
+        Measured with the two halves together instead: the body that ran
+        first saw the whole overlap and took half of it, the second saw only
+        the remainder and took half of that. A persistent two-to-one split,
+        decided by nothing but the order the group happened to be walked in.
+        """
         node_groups = _groups(self.n_nodes)
 
-        for _ in range(self.params.substeps):
-            self.sh_predict.bind()
-            self.sh_predict.image("x", self.tex_x)
-            self.sh_predict.image("v", self.tex_v)
-            self.sh_predict.image("p", self.tex_p)
-            self.sh_predict.uniform_float("h", h)
-            self.sh_predict.uniform_float("gravity", tuple(self.params.gravity))
-            self.sh_predict.uniform_int("n_nodes", self.n_nodes)
-            gpu.compute.dispatch(self.sh_predict, node_groups, 1, 1)
+        self.sh_predict.bind()
+        self.sh_predict.image("x", self.tex_x)
+        self.sh_predict.image("v", self.tex_v)
+        self.sh_predict.image("p", self.tex_p)
+        self.sh_predict.uniform_float("h", h)
+        self.sh_predict.uniform_float("gravity", tuple(self.params.gravity))
+        self.sh_predict.uniform_int("n_nodes", self.n_nodes)
+        gpu.compute.dispatch(self.sh_predict, node_groups, 1, 1)
 
-            for c in range(len(self.offsets) - 1):
-                begin, end = int(self.offsets[c]), int(self.offsets[c + 1])
-                if end <= begin:
-                    continue
-                self.sh_solve.bind()
-                self.sh_solve.image("p", self.tex_p)
-                self.sh_solve.image("tets", self.tex_tets)
-                self.sh_solve.image("rest", self.tex_rest)
-                self.sh_solve.image("torn", self.tex_torn)
-                self.sh_solve.image("live", self.tex_live)
-                self.sh_solve.uniform_float("h", h)
-                self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
-                self.sh_solve.uniform_float("mu", self.params.mu)
-                self.sh_solve.uniform_float("lam", self.params.lam)
-                self.sh_solve.uniform_int("color_begin", begin)
-                self.sh_solve.uniform_int("color_end", end)
-                gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
+        for c in range(len(self.offsets) - 1):
+            begin, end = int(self.offsets[c]), int(self.offsets[c + 1])
+            if end <= begin:
+                continue
+            self.sh_solve.bind()
+            self.sh_solve.image("p", self.tex_p)
+            self.sh_solve.image("tets", self.tex_tets)
+            self.sh_solve.image("rest", self.tex_rest)
+            self.sh_solve.image("torn", self.tex_torn)
+            self.sh_solve.image("live", self.tex_live)
+            self.sh_solve.uniform_float("h", h)
+            self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
+            self.sh_solve.uniform_float("mu", self.params.mu)
+            self.sh_solve.uniform_float("lam", self.params.lam)
+            self.sh_solve.uniform_int("color_begin", begin)
+            self.sh_solve.uniform_int("color_end", end)
+            gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
-            self._dispatch_self_collision(node_groups)
-            self._dispatch_colliders(node_groups)
+        self._dispatch_self_collision(node_groups)
+        for other in others:
+            self._dispatch_body_collision(node_groups, other)
+        self._dispatch_colliders(node_groups)
 
-            self.sh_integrate.bind()
-            self.sh_integrate.image("x", self.tex_x)
-            self.sh_integrate.image("p", self.tex_p)
-            self.sh_integrate.image("v", self.tex_v)
-            self.sh_integrate.uniform_float("h", h)
-            self.sh_integrate.uniform_float("damping", self.params.damping)
-            self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
-            gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
+    def substep_integrate(self, h) -> None:
+        """Turn the corrected positions into new positions and velocities."""
+        node_groups = _groups(self.n_nodes)
+        self.sh_integrate.bind()
+        self.sh_integrate.image("x", self.tex_x)
+        self.sh_integrate.image("p", self.tex_p)
+        self.sh_integrate.image("v", self.tex_v)
+        self.sh_integrate.uniform_float("h", h)
+        self.sh_integrate.uniform_float("damping", self.params.damping)
+        self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
+        gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
 
     def _dispatch_self_collision(self, node_groups) -> None:
         """Push apart surface nodes that have come within self_distance.
@@ -294,6 +347,27 @@ class GPUSolver:
         self.sh_self.uniform_int("n_nodes", self.n_nodes)
         self.sh_self.uniform_int("n_surf", self.n_surf)
         gpu.compute.dispatch(self.sh_self, node_groups, 1, 1)
+        self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
+
+    def _dispatch_body_collision(self, node_groups, other) -> None:
+        """Push this body's surface nodes out of ``other``.
+
+        Only this body's texels are written, so the two solvers of a pair can
+        run this against each other with no shared mutable state. The other
+        half of the correction is applied when ``other`` runs its own pass.
+        """
+        if self.sh_body is None or getattr(other, "n_surf", 0) < 1:
+            return
+        self.sh_body.bind()
+        self.sh_body.image("p", self.tex_p)
+        self.sh_body.image("out_p", self.tex_p2)
+        self.sh_body.image("x_other", other.tex_x)
+        self.sh_body.image("surf_other", other.tex_surf)
+        self.sh_body.image("surf_idx", self.tex_surf_idx)
+        self.sh_body.uniform_float("thickness", self.body_distance)
+        self.sh_body.uniform_int("n_nodes", self.n_nodes)
+        self.sh_body.uniform_int("n_surf_other", other.n_surf)
+        gpu.compute.dispatch(self.sh_body, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
 
     def _dispatch_colliders(self, node_groups) -> None:

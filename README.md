@@ -54,7 +54,9 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
 | **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
-| **Self Collision** / **Thickness** | Stop the body passing through itself where it folds. Thickness is a multiple of Resolution. |
+| **Self Collision** | Stop the body passing through itself where it folds. |
+| **Collide With Bodies** | Collide with other Marrow objects that also have it on. Both deform. |
+| **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
 | **Colliders** | The list of objects this body collides against, and whether each one is sticky. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 
@@ -110,6 +112,20 @@ Parts of the body that are already close together in the **rest** pose are left 
 
 Fast motion can still tunnel: a node moving more than the thickness in one substep can cross to the far side before it is ever tested. Raise Substeps or Thickness if you see it.
 
+### Colliding two bodies
+
+Turn **Collide With Bodies** on for each object you want in the pile. There is no pairing list: everything with it on collides with everything else that has it on, and both sides deform. The correction splits by mass, so a pinned body pushes without being pushed.
+
+Because they push each other, they have to be **simulated together**. Three consequences worth knowing before you use it:
+
+- **Baking one bakes all of them.** A two-way bake of a single body would leave the other absent from its own contact.
+- **The group runs at its highest Substeps.** A body's own setting can be raised by the company it keeps. Marrow says so on the console when it happens.
+- **Adding a body mid-playback restarts the group.** There is no sound way to splice a body into a simulation already in progress.
+
+Contact uses the same **Thickness** as self-collision, and the group takes the largest value among its members so both sides of a contact agree on the gap. Unlike self-collision there is no rest-pose exemption: two bodies share no rest state, so every contact inside the thickness is a real one.
+
+Cost is surface nodes of one body times surface nodes of the other, per pair, with N bodies making N² pairs. Two or three bodies at Resolution 0.1 is comfortable. A crowd is not.
+
 ### Ground plane
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
@@ -123,7 +139,7 @@ This is not cosmetic. Collision resolves penetration by moving the predicted pos
 | Tetrahedralize | CPU, numpy, once |
 | Tet data | Mesh vertices, ID properties and POINT attributes, surviving save and load |
 | Pack to textures | CPU to `GPUTexture`, once per simulation start |
-| Solve | GLSL compute, 5 kernels x substeps x constraint colours |
+| Solve | GLSL compute, 6 kernels x substeps x constraint colours |
 | Skin and readback | GPU blend, then only the render vertices cross PCIe |
 
 The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so thin models need a finer Resolution.
@@ -132,7 +148,8 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 
 ## Limitations
 
-- **No body-to-body collision.** Two Marrow objects pass through each other. Colliders are sphere, box and ground plane only. Self-collision is node against node only: no edge-edge or node-triangle contact, and it does not scale past roughly 20,000 surface nodes.
+- **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Analytic colliders are sphere, box and ground plane only.
+- **No friction anywhere.** Contact only ever separates, so bodies slide against each other and against themselves freely.
 - **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **Resolution changes the physics, not just the detail.** Every cage node carries the same mass regardless of cell size, so a finer cage makes the same object heavier while Stiffness stays put, and it sags further. Going from 0.25 to 0.1 on a unit sphere takes it from 461 to 5,104 mass units. Expect to re-tune Stiffness and Volume Preservation after a Resolution change rather than treating them as absolute.

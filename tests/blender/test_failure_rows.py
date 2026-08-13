@@ -3,6 +3,7 @@
 import bpy
 
 import marrow
+from marrow.blender import group as group_mod
 from marrow.blender import ops as ops_mod
 from marrow.blender import session as session_mod
 from marrow.gpu import capability
@@ -57,16 +58,18 @@ def test_a_nan_bake_reports_an_error_not_a_traceback():
     obj = _cube()
     bpy.ops.marrow.tetrahedralize()
 
-    original = session_mod.MarrowSession.bake
+    # Bake drives group.bake, because bodies that collide are simulated
+    # together and a session cannot bake itself out of that.
+    original = group_mod.bake
 
-    def exploding_bake(self, start, end, scene=None):
+    def exploding_bake(members, start, end, scene=None):
         raise MarrowNaNError(
             "Marrow produced a non-finite frame at 3. Nothing was cached. "
             "Raise Substeps, or lower Stiffness and Volume Preservation, "
             "and bake again."
         )
 
-    session_mod.MarrowSession.bake = exploding_bake
+    group_mod.bake = exploding_bake
     try:
         bpy.ops.marrow.bake()
     except RuntimeError as exc:
@@ -74,7 +77,7 @@ def test_a_nan_bake_reports_an_error_not_a_traceback():
     else:
         raise AssertionError("a NaN bake must report an error")
     finally:
-        session_mod.MarrowSession.bake = original
+        group_mod.bake = original
 
 
 def test_node_budget_refusal_names_the_count():

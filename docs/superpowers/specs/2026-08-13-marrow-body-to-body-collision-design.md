@@ -36,9 +36,12 @@ def step(self, others=()):
         self.substep(h, others)
 
 def substep(self, h, others=()):
-    predict -> solve colours -> self-collide -> body-collide (per other) ->
-    colliders -> integrate
+    self.substep_constraints(h, others)   # predict, solve colours,
+    self.substep_integrate(h)             # self-collide, body-collide,
+                                          # colliders / then integrate
 ```
+
+The two halves are separate because a group has to run every member's constraints before any member integrates - see D2a.
 
 The group driver then interleaves at substep granularity:
 
@@ -58,7 +61,23 @@ Body-collision runs after self-collision and before external colliders, for the 
 
 The cost is one substep of lag: with 10 substeps at 24 fps, a body at 5 m/s has moved 0.02 m by the time it is seen, against a 0.1 m thickness at Resolution 0.1.
 
-Within a substep the bodies are Gauss-Seidel with respect to each other - the second body in the list sees the first body's freshly integrated state, the first saw the second's previous one. Asymmetric, convergent, and cheaper than a Jacobi pass over both.
+### D2a. Corrected during implementation: constraints for everyone, then integration for everyone
+
+This section originally called the within-substep behaviour "Gauss-Seidel with respect to each other - asymmetric, convergent". The symmetry test proved that wrong, and it was a real defect rather than a bad assertion.
+
+Only `integrate` writes `tex_x`. Running each body's whole substep in turn therefore means the body walked second reads the body walked first's *already integrated* state. Measured on two equal unit tets overlapping by half the thickness: the first body moved 0.050 and the second 0.025. The first sees the whole overlap and takes half of it, the second sees only the remainder and takes half of that - a persistent **two to one** split, decided by nothing but list order. Two identical blobs would visibly squash by different amounts, and swapping their names would swap which.
+
+`substep()` is therefore split again, into `substep_constraints()` and `substep_integrate()`, and the driver runs:
+
+```python
+for _ in range(substeps):
+    for body in members:
+        body.substep_constraints(h, others)
+    for body in members:
+        body.substep_integrate(h)
+```
+
+Nobody has written `tex_x` when the contact passes run, so every body sees the same snapshot of every other and the split is exactly the mass ratio. This costs nothing: no copies, no extra images, and for a group of one the dispatch order is unchanged.
 
 ### D3. Two-way coupling falls out of the mass split
 

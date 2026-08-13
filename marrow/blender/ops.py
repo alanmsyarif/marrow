@@ -3,7 +3,7 @@
 import bpy
 import numpy as np
 
-from ..blender import handlers
+from ..blender import group, handlers
 from ..blender.inside_bvh import cell_mask_from_object
 from ..blender.session import MarrowSession
 from ..blender.storage import write_bind, write_tetmesh
@@ -111,6 +111,29 @@ def collider_objects_of(obj):
     return pairs
 
 
+def session_for(obj) -> MarrowSession:
+    """A session for ``obj`` built from its panel settings.
+
+    Shared with the bake operator's group path, which needs the same session
+    for every body in the group and not only for the active object.
+    """
+    settings = obj.marrow
+    thickness = float(settings.self_thickness) * float(settings.resolution)
+    return MarrowSession(
+        obj,
+        _params_from(settings),
+        ground_z=float(settings.ground_z),
+        ground_on=bool(settings.ground_enabled),
+        collider_objects=collider_objects_of(obj),
+        tear_threshold=(
+            float(settings.tear_threshold) if settings.tearing_enabled else 0.0
+        ),
+        stick_break=float(settings.stick_break),
+        self_distance=thickness if settings.self_collision else 0.0,
+        body_distance=thickness if settings.body_collision else 0.0,
+    )
+
+
 def _params_from(settings) -> SolverParams:
     """Map the panel sliders onto the solver's parameters."""
     return SolverParams(
@@ -145,48 +168,43 @@ class MARROW_OT_bake(bpy.types.Operator):
             )
             return {"CANCELLED"}
 
-        colliders = collider_objects_of(obj)
+        # Bodies that collide are simulated together, so baking one has to
+        # bake all of them. Membership comes from the scene rather than from
+        # the live sessions, which are about to be cleared.
+        bodies = [obj] + group.partners_in_scene(obj)
 
-        # Drop the previous session and stop the handler before baking:
+        # Drop the previous sessions and stop the handler before baking:
         # baking steps the scene frame to sample animated colliders, and a
         # live handler would write stale cache frames back into the mesh
         # while we are mid-bake.
-        previous = handlers.SESSIONS.pop(obj.name, None)
-        if previous is not None:
-            previous.free()
+        for body in bodies:
+            previous = handlers.SESSIONS.pop(body.name, None)
+            if previous is not None:
+                previous.free()
         handlers.unregister_handler()
 
         try:
-            session = MarrowSession(
-                obj,
-                _params_from(settings),
-                ground_z=float(settings.ground_z),
-                ground_on=bool(settings.ground_enabled),
-                collider_objects=colliders,
-                tear_threshold=(
-                    float(settings.tear_threshold) if settings.tearing_enabled else 0.0
-                ),
-                stick_break=float(settings.stick_break),
-                self_distance=(
-                    float(settings.self_thickness) * float(settings.resolution)
-                    if settings.self_collision else 0.0
-                ),
-            )
+            sessions = [session_for(body) for body in bodies]
         except ValueError as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
         try:
-            frames = session.bake(scene.frame_start, scene.frame_end, scene=scene)
+            frames = group.bake(
+                sessions, scene.frame_start, scene.frame_end, scene=scene
+            )
         except MarrowNaNError as exc:
-            session.free()
+            for session in sessions:
+                session.free()
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
-        handlers.SESSIONS[obj.name] = session
+        for session in sessions:
+            handlers.SESSIONS[session.object_name] = session
         handlers.register_handler()
 
-        self.report({"INFO"}, f"Marrow: baked {frames} frames")
+        extra = f" for {len(sessions)} bodies" if len(sessions) > 1 else ""
+        self.report({"INFO"}, f"Marrow: baked {frames} frames{extra}")
         return {"FINISHED"}
 
 

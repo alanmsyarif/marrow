@@ -28,7 +28,7 @@ class MarrowSession:
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
                  collider_objects=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0):
+                 self_distance=0.0, body_distance=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -40,6 +40,7 @@ class MarrowSession:
         self.tear_threshold = float(tear_threshold)
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
+        self.body_distance = float(body_distance)
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
         self.live = False
@@ -97,6 +98,7 @@ class MarrowSession:
             tear_threshold=self.tear_threshold,
             stick_break=self.stick_break,
             self_distance=self.self_distance,
+            body_distance=self.body_distance,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -128,10 +130,9 @@ class MarrowSession:
         )
         self.stick_break = float(settings.stick_break)
         # The panel holds a multiple of Resolution; the solver wants metres.
-        self.self_distance = (
-            float(settings.self_thickness) * float(settings.resolution)
-            if settings.self_collision else 0.0
-        )
+        thickness = float(settings.self_thickness) * float(settings.resolution)
+        self.self_distance = thickness if settings.self_collision else 0.0
+        self.body_distance = thickness if settings.body_collision else 0.0
         from .ops import collider_objects_of
 
         self.collider_objects = collider_objects_of(obj)
@@ -152,55 +153,35 @@ class MarrowSession:
     def bake(self, frame_start: int, frame_end: int, scene=None) -> int:
         """Simulate frame_start..frame_end inclusive, caching each frame.
 
-        Rebuilds the solver first so a bake always starts from rest rather
-        than from wherever a previous bake left the cage.
+        A group of one. Baking bodies that collide goes through
+        group.bake with every member, since a two-way bake of one body alone
+        would leave the other absent from its own contact.
         """
-        self._check_live()
-        self._cache.clear()
-        self.refresh_from_object()
-        self._build_solver()
-        self._last_simulated = int(frame_end)
-        self.live = False
-        self.baked = True
+        from . import group
 
-        for frame in range(int(frame_start), int(frame_end) + 1):
-            if scene is not None and self.collider_objects:
-                # Re-sample collider transforms so animated colliders work.
-                # Without this a falling ball would sit still for the whole bake.
-                scene.frame_set(frame)
-                self.solver.colliders = self._collider_specs()
-            self.solver.step()
-            positions = self.solver.skin()
-            # skin() already raises on NaN. Readback is not fully reliable -
-            # there is no barrier API - so refuse to cache anything suspect
-            # rather than bake a bad frame in permanently.
-            if not np.all(np.isfinite(positions)):
-                raise MarrowNaNError(
-                    f"Marrow produced a non-finite frame at {frame}. Nothing "
-                    f"was cached. Raise Substeps, or lower Stiffness and "
-                    f"Volume Preservation, and bake again."
-                )
-            self._cache[frame] = positions.astype(np.float32)
-
-        return len(self._cache)
+        return group.bake([self], frame_start, frame_end, scene=scene)
 
     # Small skips are tolerated so playback that drops a frame does not
     # permanently stall the simulation. A large jump is not chased - catching
     # up hundreds of frames inside a frame handler would lock the UI.
     MAX_CATCHUP = 8
 
-    def _step_and_cache(self, frame: int):
-        if self.collider_objects:
-            # The handler runs after the frame changed, so collider transforms
-            # are already at the new frame.
-            self.solver.colliders = self._collider_specs()
-        self.solver.step()
+    def cache_frame(self, frame: int):
+        """Skin the current solver state and cache it as ``frame``.
+
+        The group driver owns the stepping, because bodies that collide have
+        to be interleaved substep by substep. This is the half that stays
+        with the session: it reads back and stores its own frame.
+        """
         positions = self.solver.skin()
+        # skin() already raises on NaN. Readback is not fully reliable -
+        # there is no barrier API - so refuse to cache anything suspect
+        # rather than keep a bad frame permanently.
         if not np.all(np.isfinite(positions)):
             raise MarrowNaNError(
-                f"Marrow produced a non-finite frame at {frame}. Live "
-                f"simulation stopped. Raise Substeps, or lower Stiffness and "
-                f"Volume Preservation."
+                f"Marrow produced a non-finite frame at {frame}. Nothing was "
+                f"cached. Raise Substeps, or lower Stiffness and Volume "
+                f"Preservation."
             )
         self._cache[frame] = positions.astype(np.float32)
         self._last_simulated = frame
@@ -211,38 +192,14 @@ class MarrowSession:
 
         Returns None when the frame cannot be served: before the start, or
         after a jump too large to catch up with.
+
+        The work happens in group.py, because a body that collides with
+        another has to be advanced alongside it. A body with no partners is
+        a group of one and takes the same path.
         """
-        self._check_live()
-        frame, frame_start = int(frame), int(frame_start)
+        from . import group
 
-        # A baked cache is played back, never regenerated.
-        if self.baked:
-            return self._cache.get(frame)
-
-        if not self.live or frame < frame_start:
-            return self._cache.get(frame)
-
-        # Returning to the start always restarts, even if that frame is
-        # already cached. That is what makes edited sliders take effect
-        # without having to free the cache by hand.
-        if self._last_simulated is None or frame == frame_start:
-            self._cache.clear()
-            self.refresh_from_object()
-            self._build_solver()
-            self._last_simulated = frame_start - 1
-        else:
-            cached = self._cache.get(frame)
-            if cached is not None:
-                return cached
-
-        gap = frame - self._last_simulated
-        if gap <= 0 or gap > self.MAX_CATCHUP:
-            return None
-
-        result = None
-        for step_frame in range(self._last_simulated + 1, frame + 1):
-            result = self._step_and_cache(step_frame)
-        return result
+        return group.advance(self, frame, frame_start)
 
     def frame_positions(self, frame: int):
         """Cached world-space render positions, or None if not baked."""

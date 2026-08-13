@@ -438,6 +438,52 @@ void main()
 }
 """
 
+BODY_COLLIDE_SRC = """
+// Collision against another Marrow body. One dispatch per other body.
+//
+// The self-collide kernel with two things removed: there is no self to skip,
+// and no rest-distance gate, because two bodies share no rest configuration
+// and every contact inside the thickness is a real one.
+//
+// The partner is sampled from x_other, its integrated position, and never
+// from its p. p is a work in progress whose meaning depends on how far
+// through its own substep the other body happens to be, which would make the
+// result depend on the order the group driver walks its members - invisible
+// from the outside and impossible to reproduce. x_other costs one substep of
+// lag instead: 0.02m at 5 m/s with 10 substeps, against a 0.1m thickness.
+//
+// Two-way coupling needs no mechanism of its own. This body takes
+// w_self / (w_self + w_other) of the correction and the other body, running
+// its own dispatch, takes the rest. The shares sum to one, so the pair opens
+// to exactly the thickness and a pinned partner pushes without moving.
+
+void main()
+{
+  int i = int(gl_GlobalInvocationID.x);
+  if (i >= n_nodes) { return; }
+  ivec2 c = texel(i);
+  vec4 pi = imageLoad(p, c);
+
+  // Write through, always - see SELF_COLLIDE_SRC on the ping-pong.
+  int si = int(imageLoad(surf_idx, c).r);
+  if (si < 0 || !(pi.w > 0.0)) { imageStore(out_p, c, pi); return; }
+
+  vec3 fix = vec3(0.0);
+  for (int s = 0; s < n_surf_other; ++s) {
+    vec4 pj = imageLoad(x_other, texel(int(imageLoad(surf_other, texel(s)).r)));
+
+    vec3 d = pj.xyz - pi.xyz;
+    float d2 = dot(d, d);
+    if (d2 >= thickness * thickness || d2 < 1e-12) { continue; }
+
+    float dist = sqrt(d2);
+    float share = pi.w / (pi.w + pj.w);
+    fix -= d * ((thickness - dist) / dist) * share;
+  }
+  imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
+}
+"""
+
 SKIN_SRC = """
 void main()
 {

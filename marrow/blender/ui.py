@@ -123,13 +123,22 @@ class MarrowSettings(bpy.types.PropertyGroup):
         ),
         default=False,
     )
+    body_collision: bpy.props.BoolProperty(
+        name="Collide With Bodies",
+        description=(
+            "Collide with every other Marrow object that also has this on, "
+            "and deform both. They are simulated together, so baking one "
+            "bakes all of them and the group runs at its highest Substeps"
+        ),
+        default=False,
+    )
     self_thickness: bpy.props.FloatProperty(
         name="Thickness",
         description=(
-            "Contact gap between parts of the body, as a multiple of "
-            "Resolution. 1.0 keeps the render surface from visibly "
-            "interpenetrating. Below 1.0 a fold can slip through between "
-            "cage nodes"
+            "Contact gap, as a multiple of Resolution, for both Self "
+            "Collision and Collide With Bodies. 1.0 keeps the render surface "
+            "from visibly interpenetrating. Below 1.0 a fold can slip through "
+            "between cage nodes"
         ),
         default=1.0,
         min=0.1,
@@ -197,10 +206,11 @@ class MARROW_PT_panel(bpy.types.Panel):
         row.enabled = settings.tearing_enabled
         row.prop(settings, "tear_threshold")
 
-        selfcol = sim.box()
-        selfcol.prop(settings, "self_collision")
-        row = selfcol.row()
-        row.enabled = settings.self_collision
+        contact = sim.box()
+        contact.prop(settings, "self_collision")
+        contact.prop(settings, "body_collision")
+        row = contact.row()
+        row.enabled = settings.self_collision or settings.body_collision
         row.prop(settings, "self_thickness")
 
         # Colliders belong to the body being simulated: pick them here rather
