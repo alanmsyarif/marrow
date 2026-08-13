@@ -114,6 +114,27 @@ class MarrowSettings(bpy.types.PropertyGroup):
         min=1.01,
         soft_max=5.0,
     )
+    self_collision: bpy.props.BoolProperty(
+        name="Self Collision",
+        description=(
+            "Stop the body passing through itself where it folds. Costs "
+            "roughly 5ms a frame at Resolution 0.1 and grows with the square "
+            "of the cage's surface"
+        ),
+        default=False,
+    )
+    self_thickness: bpy.props.FloatProperty(
+        name="Thickness",
+        description=(
+            "Contact gap between parts of the body, as a multiple of "
+            "Resolution. 1.0 keeps the render surface from visibly "
+            "interpenetrating. Below 1.0 a fold can slip through between "
+            "cage nodes"
+        ),
+        default=1.0,
+        min=0.1,
+        soft_max=3.0,
+    )
     colliders: bpy.props.CollectionProperty(type=MarrowColliderSlot)
     active_collider: bpy.props.IntProperty(default=0)
     stick_break: bpy.props.FloatProperty(
@@ -175,6 +196,12 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = tearing.row()
         row.enabled = settings.tearing_enabled
         row.prop(settings, "tear_threshold")
+
+        selfcol = sim.box()
+        selfcol.prop(settings, "self_collision")
+        row = selfcol.row()
+        row.enabled = settings.self_collision
+        row.prop(settings, "self_thickness")
 
         # Colliders belong to the body being simulated: pick them here rather
         # than walking to each object and tagging it.

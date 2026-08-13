@@ -54,6 +54,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
 | **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
+| **Self Collision** / **Thickness** | Stop the body passing through itself where it folds. Thickness is a multiple of Resolution. |
 | **Colliders** | The list of objects this body collides against, and whether each one is sticky. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 
@@ -90,6 +91,25 @@ Two things a torn tet still does:
 - **It keeps a volume constraint**, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1x on a stretch test.
 - **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
+### Self collision
+
+Off by default, because it is the second most expensive knob after Substeps. Measured on an RTX 5050, cost per frame at 10 substeps:
+
+| Resolution | cage nodes | surface nodes | off | on |
+|---|---|---|---|---|
+| 0.25 | 461 | 314 | 1.9 ms | 3.0 ms |
+| 0.15 | 1,707 | 848 | 2.0 ms | 4.9 ms |
+| 0.10 | 5,233 | 1,898 | 2.1 ms | 8.4 ms |
+| 0.07 | 14,226 | 3,866 | 2.5 ms | 15.2 ms |
+
+Only nodes on the surface of the cage take part, so the cost grows with the square of an area rather than of a volume. Every surface node is tested against every other one; there is no spatial hash, because integer images and `imageAtomicAdd` do not work in Blender's Python GPU API and a CPU-side hash would mean reading the whole cage back every frame.
+
+**Thickness** is the contact gap, as a multiple of Resolution. 1.0 keeps the skinned render surface from visibly interpenetrating. Below about 1.0 a fold can slip between cage nodes, since contact is node against node and nothing checks the space between them.
+
+Parts of the body that are already close together in the **rest** pose are left alone. This is what stops the cage fighting its own tets, whose nodes sit exactly one Resolution apart, but it also means a shape authored with two surfaces already touching will let those two surfaces keep passing through each other.
+
+Fast motion can still tunnel: a node moving more than the thickness in one substep can cross to the far side before it is ever tested. Raise Substeps or Thickness if you see it.
+
 ### Ground plane
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
@@ -103,7 +123,7 @@ This is not cosmetic. Collision resolves penetration by moving the predicted pos
 | Tetrahedralize | CPU, numpy, once |
 | Tet data | Mesh vertices, ID properties and POINT attributes, surviving save and load |
 | Pack to textures | CPU to `GPUTexture`, once per simulation start |
-| Solve | GLSL compute, 4 kernels x substeps x constraint colours |
+| Solve | GLSL compute, 5 kernels x substeps x constraint colours |
 | Skin and readback | GPU blend, then only the render vertices cross PCIe |
 
 The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so thin models need a finer Resolution.
@@ -112,7 +132,7 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 
 ## Limitations
 
-- **No self-collision or body-to-body collision.** Colliders are sphere, box and ground plane only.
+- **No body-to-body collision.** Two Marrow objects pass through each other. Colliders are sphere, box and ground plane only. Self-collision is node against node only: no edge-edge or node-triangle contact, and it does not scale past roughly 20,000 surface nodes.
 - **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **Resolution changes the physics, not just the detail.** Every cage node carries the same mass regardless of cell size, so a finer cage makes the same object heavier while Stiffness stays put, and it sags further. Going from 0.25 to 0.1 on a unit sphere takes it from 461 to 5,104 mass units. Expect to re-tune Stiffness and Volume Preservation after a Resolution change rather than treating them as absolute.

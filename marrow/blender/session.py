@@ -27,7 +27,8 @@ class MarrowSession:
     """Owns the GPU state and the baked cache for one object."""
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
-                 collider_objects=None, tear_threshold=0.0, stick_break=0.0):
+                 collider_objects=None, tear_threshold=0.0, stick_break=0.0,
+                 self_distance=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -38,6 +39,7 @@ class MarrowSession:
         self.collider_objects = list(collider_objects or [])
         self.tear_threshold = float(tear_threshold)
         self.stick_break = float(stick_break)
+        self.self_distance = float(self_distance)
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
         self.live = False
@@ -94,6 +96,7 @@ class MarrowSession:
             colliders=self._collider_specs(),
             tear_threshold=self.tear_threshold,
             stick_break=self.stick_break,
+            self_distance=self.self_distance,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -124,6 +127,11 @@ class MarrowSession:
             float(settings.tear_threshold) if settings.tearing_enabled else 0.0
         )
         self.stick_break = float(settings.stick_break)
+        # The panel holds a multiple of Resolution; the solver wants metres.
+        self.self_distance = (
+            float(settings.self_thickness) * float(settings.resolution)
+            if settings.self_collision else 0.0
+        )
         from .ops import collider_objects_of
 
         self.collider_objects = collider_objects_of(obj)

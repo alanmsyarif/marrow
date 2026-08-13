@@ -22,6 +22,24 @@ def repair_orientation(tets: np.ndarray, nodes: np.ndarray) -> np.ndarray:
     return fixed
 
 
+_TET_FACES = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.intp)
+
+
+def surface_nodes(tets: np.ndarray) -> np.ndarray:
+    """Cage nodes on the boundary, ascending.
+
+    A tet face owned by exactly one tet is on the boundary; a face between two
+    tets is named by both. Sorting each face's three indices makes the two
+    namings of a shared face identical, so counting duplicates finds the hull.
+    """
+    tets = np.asarray(tets)
+    if tets.size == 0:
+        return np.zeros(0, dtype=np.int32)
+    faces = np.sort(tets[:, _TET_FACES].reshape(-1, 3), axis=1)
+    unique, counts = np.unique(faces, axis=0, return_counts=True)
+    return np.unique(unique[counts == 1]).astype(np.int32)
+
+
 @dataclass(frozen=True)
 class TetMesh:
     nodes: np.ndarray  # (N, 3) float64

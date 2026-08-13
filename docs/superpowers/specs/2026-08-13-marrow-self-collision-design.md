@@ -61,6 +61,19 @@ A Jacobi kernel with the rest-distance gate, dispatched over the node image, tim
 
 15 billion pair-tests per second at the top of the range. Current frame cost without self-collision is 1-2 ms, so Resolution 0.1 goes to roughly 7 ms/frame and stays interactive.
 
+### Confirmed after implementation
+
+Measured through the shipped `GPUSolver`, ball cages, 10 substeps:
+
+| Resolution | cage nodes | surface nodes | off | on | delta |
+|---|---|---|---|---|---|
+| 0.25 | 461 | 314 | 1.9 ms | 3.0 ms | 1.1 ms |
+| 0.15 | 1,707 | 848 | 2.0 ms | 4.9 ms | 2.9 ms |
+| 0.10 | 5,233 | 1,898 | 2.1 ms | 8.4 ms | **6.3 ms** |
+| 0.07 | 14,226 | 3,866 | 2.5 ms | 15.2 ms | 12.8 ms |
+
+The delta runs about 30% above the microbenchmark - the bind and uniform calls happen once per substep, ten times a frame. The conclusion is unchanged.
+
 ## Design decisions
 
 ### D1. No spatial hash

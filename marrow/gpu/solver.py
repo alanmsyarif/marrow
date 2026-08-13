@@ -36,6 +36,7 @@ from ..core.layout import (
     unpack_vec3,
 )
 from ..core.solver_ref import precompute
+from ..core.tetmesh import surface_nodes
 from ..gpu import kernels
 from ..gpu.textures import (
     blank,
@@ -75,11 +76,15 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
-                 colliders=None, tear_threshold=0.0, stick_break=0.0):
+                 colliders=None, tear_threshold=0.0, stick_break=0.0,
+                 self_distance=0.0):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
         self.ground_on = bool(ground_on)
+        # An absolute world distance, not the UI's multiple of Resolution.
+        # Zero disables self-collision and allocates nothing.
+        self.self_distance = float(self_distance)
         # Each entry is (kind, to_local, to_world) with kind 1 sphere, 2 box,
         # optionally followed by a sticky flag.
         self.colliders = list(colliders or [])
@@ -120,6 +125,34 @@ class GPUSolver:
         # One texel per node: .xyz the contact point in the holding collider's
         # local space, .w that collider's id. Zero means the node is free.
         self.tex_stick = blank(self.n_nodes)
+
+        self.sh_self = None
+        surf = surface_nodes(mesh.tets) if self.self_distance > 0.0 else None
+        if surf is not None and surf.shape[0] > 1:
+            self.n_surf = int(surf.shape[0])
+            # Where each node sits in the surface list, -1 for interior. The
+            # kernel needs the index and not merely a flag, so a thread can
+            # skip itself without comparing node ids.
+            idx = np.full(self.n_nodes, -1.0)
+            idx[surf] = np.arange(self.n_surf)
+            self.tex_surf = upload_verified(pack_scalar(surf), fmt="R32F")
+            self.tex_surf_idx = upload_verified(pack_scalar(idx), fmt="R32F")
+            # Rest node positions. tex_rest is per-tet dm_inv and rest volume;
+            # this is the per-node configuration those were built from, which
+            # the rest-distance gate compares against.
+            self.tex_rest_pos = upload_verified(
+                pack_nodes(start, np.zeros(self.n_nodes))
+            )
+            self.tex_p2 = blank(self.n_nodes)
+            self.sh_self = kernels.build(
+                "self_collide", kernels.SELF_COLLIDE_SRC,
+                [("RGBA32F", "FLOAT_2D", "p", {"READ"}),
+                 ("RGBA32F", "FLOAT_2D", "out_p", {"WRITE"}),
+                 ("RGBA32F", "FLOAT_2D", "rest_pos", {"READ"}),
+                 ("R32F", "FLOAT_2D", "surf", {"READ"}),
+                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"})],
+                [("FLOAT", "thickness"), ("INT", "n_nodes"), ("INT", "n_surf")],
+            )
 
         self.sh_predict = kernels.build(
             "predict", kernels.PREDICT_SRC,
@@ -226,6 +259,7 @@ class GPUSolver:
                 self.sh_solve.uniform_int("color_end", end)
                 gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
+            self._dispatch_self_collision(node_groups)
             self._dispatch_colliders(node_groups)
 
             self.sh_integrate.bind()
@@ -236,6 +270,31 @@ class GPUSolver:
             self.sh_integrate.uniform_float("damping", self.params.damping)
             self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
             gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
+
+    def _dispatch_self_collision(self, node_groups) -> None:
+        """Push apart surface nodes that have come within self_distance.
+
+        Runs before the colliders so a pin, a ground plane or a sticky grab
+        gets the last word on a node that is in both kinds of contact.
+
+        The kernel cannot correct in place - it reads every surface node and
+        writes its own, so one image cannot be both. It writes tex_p2 and the
+        two swap here. Every other stage binds self.tex_p at dispatch time,
+        so the swap costs nothing and no copy pass is needed.
+        """
+        if self.sh_self is None:
+            return
+        self.sh_self.bind()
+        self.sh_self.image("p", self.tex_p)
+        self.sh_self.image("out_p", self.tex_p2)
+        self.sh_self.image("rest_pos", self.tex_rest_pos)
+        self.sh_self.image("surf", self.tex_surf)
+        self.sh_self.image("surf_idx", self.tex_surf_idx)
+        self.sh_self.uniform_float("thickness", self.self_distance)
+        self.sh_self.uniform_int("n_nodes", self.n_nodes)
+        self.sh_self.uniform_int("n_surf", self.n_surf)
+        gpu.compute.dispatch(self.sh_self, node_groups, 1, 1)
+        self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
 
     def _dispatch_colliders(self, node_groups) -> None:
         """One dispatch per collider, ground plane included.

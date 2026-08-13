@@ -167,6 +167,10 @@ class MARROW_OT_bake(bpy.types.Operator):
                     float(settings.tear_threshold) if settings.tearing_enabled else 0.0
                 ),
                 stick_break=float(settings.stick_break),
+                self_distance=(
+                    float(settings.self_thickness) * float(settings.resolution)
+                    if settings.self_collision else 0.0
+                ),
             )
         except ValueError as exc:
             self.report({"ERROR"}, str(exc))

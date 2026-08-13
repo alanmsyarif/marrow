@@ -378,6 +378,66 @@ void main()
 
 
 # `out` is a reserved word in GLSL, so the destination image is `out_pos`.
+SELF_COLLIDE_SRC = """
+// Self-collision between surface nodes of the cage. All pairs, Jacobi.
+//
+// No spatial hash. Ten Minute Physics 15 builds one to escape O(n^2) on a
+// CPU in JavaScript; here the pairs are restricted to the boundary of the
+// cage and run on the card, where 29M pair tests measure 1.9ms. A hash would
+// need imageAtomicAdd on an integer image, and integer images do not work in
+// Blender's Python GPU API at all - imageStore never lands and read() only
+// ever hands back a FLOAT buffer.
+//
+// Jacobi, not Gauss-Seidel: each thread owns node i, reads every surface
+// node j, and writes only its own texel of out_p. Nothing needs colouring or
+// atomics. Reading and writing one image in a single dispatch would race, so
+// the caller ping-pongs p with out_p afterwards - which is exactly why EVERY
+// thread must write one texel. An early return leaves a stale texel behind
+// and the node jumps to wherever the other buffer last had it.
+
+void main()
+{
+  int i = int(gl_GlobalInvocationID.x);
+  if (i >= n_nodes) { return; }
+  ivec2 c = texel(i);
+  vec4 pi = imageLoad(p, c);
+
+  // Interior nodes cannot be the first point of contact on a closed cage,
+  // and a pin outranks a self-contact. Both still write through.
+  int si = int(imageLoad(surf_idx, c).r);
+  if (si < 0 || !(pi.w > 0.0)) { imageStore(out_p, c, pi); return; }
+
+  vec3 rest_i = imageLoad(rest_pos, c).xyz;
+  vec3 fix = vec3(0.0);
+
+  for (int s = 0; s < n_surf; ++s) {
+    if (s == si) { continue; }
+    ivec2 cj = texel(int(imageLoad(surf, texel(s)).r));
+    vec4 pj = imageLoad(p, cj);
+
+    vec3 d = pj.xyz - pi.xyz;
+    float d2 = dot(d, d);
+    if (d2 >= thickness * thickness || d2 < 1e-12) { continue; }
+
+    // Rest-distance gate, from the reference. Lattice neighbours sit one
+    // Resolution apart at rest, which is the default thickness, so without
+    // this every node would fight its own tets on every substep.
+    vec3 r = imageLoad(rest_pos, cj).xyz - rest_i;
+    float rest2 = dot(r, r);
+    if (d2 >= rest2) { continue; }
+
+    float mind = (rest2 < thickness * thickness) ? sqrt(rest2) : thickness;
+    float dist = sqrt(d2);
+    // Mass weighted, where the reference splits a flat half: a pinned
+    // partner has zero inverse mass and takes none of the correction, so
+    // this node has to take all of it.
+    float share = pi.w / (pi.w + pj.w);
+    fix -= d * ((mind - dist) / dist) * share;
+  }
+  imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
+}
+"""
+
 SKIN_SRC = """
 void main()
 {
