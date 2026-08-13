@@ -13,6 +13,7 @@ TETS_KEY = "marrow_tets"
 COLORS_KEY = "marrow_colors"
 BIND_IDX = "marrow_bind_idx"
 BIND_W = ("marrow_bind_w0", "marrow_bind_w1", "marrow_bind_w2", "marrow_bind_w3")
+REST_KEY = "marrow_rest"
 
 
 def write_tetmesh(mesh, tetmesh: TetMesh, colors: np.ndarray) -> None:
@@ -55,6 +56,54 @@ def write_bind(mesh, bind_idx: np.ndarray, bind_w: np.ndarray) -> None:
         _ensure_attr(mesh, name, "FLOAT").data.foreach_set(
             "value", np.asarray(bind_w[:, i], dtype=np.float32).tolist()
         )
+    mesh.update()
+
+
+def write_rest(mesh) -> None:
+    """Record the mesh's current vertex positions as its rest shape.
+
+    Simulation writes straight into mesh.vertices, so without this there is
+    nothing to go back to: freeing a bake would leave the object deformed,
+    and re-tetrahedralizing would make the deformed pose the new rest shape.
+
+    Object space, which is what mesh.vertices holds, so a restore does not
+    depend on the object transform having stayed where it was.
+    """
+    count = len(mesh.vertices)
+    positions = np.empty(count * 3, dtype=np.float64)
+    mesh.vertices.foreach_get("co", positions)
+    _ensure_attr(mesh, REST_KEY, "FLOAT_VECTOR").data.foreach_set(
+        "vector", positions.tolist()
+    )
+    mesh.update()
+
+
+def read_rest(mesh):
+    """The stored rest positions as (N, 3), or None if there are none."""
+    attr = mesh.attributes.get(REST_KEY)
+    if attr is None:
+        return None
+    positions = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
+    attr.data.foreach_get("vector", positions)
+    return positions.reshape(-1, 3)
+
+
+def restore_rest(mesh) -> bool:
+    """Put the mesh back into its rest shape. False if none was stored."""
+    positions = read_rest(mesh)
+    if positions is None or positions.shape[0] != len(mesh.vertices):
+        return False
+    mesh.vertices.foreach_set("co", positions.ravel())
+    mesh.update()
+    return True
+
+
+def clear_marrow_data(mesh) -> None:
+    """Remove every attribute Marrow wrote. Tolerates any being absent."""
+    for name in (REST_KEY, BIND_IDX) + BIND_W:
+        attr = mesh.attributes.get(name)
+        if attr is not None:
+            mesh.attributes.remove(attr)
     mesh.update()
 
 

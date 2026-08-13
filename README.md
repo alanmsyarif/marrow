@@ -31,6 +31,16 @@ That is the whole loop. **Live is on by default**: each frame is simulated as th
 
 To change how it behaves, edit any slider and **return to the start frame**. That restarts the simulation with the new settings, with no freeing and no rebaking. Measured on an RTX 5050, a live frame costs 1 to 2 ms from a 125-node cage up to a 2,744-node one, so the edit loop stays interactive.
 
+### Getting your object back
+
+**De-tetrahedralize**, in the Cage box, restores the shape you modelled, deletes the cage, strips every attribute Marrow wrote and releases the session. The mesh comes back bit-identical.
+
+It works because Tetrahedralize records the rest shape in a `marrow_rest` attribute first. That also means re-tetrahedralizing after playing the timeline rebuilds from the original shape rather than from the deformed pose, so changing Resolution mid-project is safe.
+
+Note that **Free Bake is not this**. Free Bake discards the cache and the GPU memory and leaves the object tetrahedralised and deformed, ready to simulate again.
+
+Editing the mesh's topology between the two invalidates the stored shape, since the attribute is per-point. Re-tetrahedralize after any Edit Mode change.
+
 ### Live or Bake
 
 | | |
@@ -138,6 +148,7 @@ This is not cosmetic. Collision resolves penetration by moving the predicted pos
 |---|---|
 | Tetrahedralize | CPU, numpy, once |
 | Tet data | Mesh vertices, ID properties and POINT attributes, surviving save and load |
+| Rest shape | A `marrow_rest` POINT attribute, so De-tetrahedralize can undo the whole thing |
 | Pack to textures | CPU to `GPUTexture`, once per simulation start |
 | Solve | GLSL compute, 6 kernels x substeps x constraint colours |
 | Skin and readback | GPU blend, then only the render vertices cross PCIe |

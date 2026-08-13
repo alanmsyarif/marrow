@@ -6,7 +6,13 @@ import numpy as np
 from ..blender import group, handlers
 from ..blender.inside_bvh import cell_mask_from_object
 from ..blender.session import MarrowSession
-from ..blender.storage import write_bind, write_tetmesh
+from ..blender.storage import (
+    clear_marrow_data,
+    restore_rest,
+    write_bind,
+    write_rest,
+    write_tetmesh,
+)
 from ..core.bind import bind_points
 from ..core.coloring import color_tets
 from ..core.lattice import build_lattice
@@ -31,6 +37,12 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         spacing = float(obj.marrow.resolution)
+
+        # Build from the shape the user modelled, never from a simulated
+        # pose. Without this, tetrahedralizing again after playing the
+        # timeline would make the deformed mesh the new rest shape, and the
+        # drift would compound every time Resolution was changed.
+        restore_rest(obj.data)
 
         mask, bounds_min = cell_mask_from_object(obj, spacing)
         if not mask.any():
@@ -58,14 +70,11 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
 
         bind_idx, bind_w = bind_points(tetmesh.nodes, tetmesh.tets, world_verts)
         write_bind(obj.data, bind_idx, bind_w)
+        # Captured after the restore above, so it is the modelled shape.
+        write_rest(obj.data)
 
         cage_name = f"{obj.name}{CAGE_SUFFIX}"
-        existing = bpy.data.objects.get(cage_name)
-        if existing is not None:
-            cage_mesh = existing.data
-            bpy.data.objects.remove(existing, do_unlink=True)
-            if cage_mesh.users == 0:
-                bpy.data.meshes.remove(cage_mesh)
+        remove_cage(obj)
 
         cage_mesh = bpy.data.meshes.new(cage_name)
         write_tetmesh(cage_mesh, tetmesh, colors)
@@ -94,6 +103,53 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
             f"Marrow: {tetmesh.n_tets} tets, {tetmesh.n_nodes} nodes, "
             f"{int(colors.max()) + 1 if colors.size else 0} colours",
         )
+        return {"FINISHED"}
+
+
+def remove_cage(obj) -> bool:
+    """Delete ``obj``'s cage object and its mesh. False if it had none."""
+    cage = bpy.data.objects.get(f"{obj.name}{CAGE_SUFFIX}")
+    if cage is None:
+        return False
+    cage_mesh = cage.data
+    bpy.data.objects.remove(cage, do_unlink=True)
+    if cage_mesh is not None and cage_mesh.users == 0:
+        bpy.data.meshes.remove(cage_mesh)
+    return True
+
+
+class MARROW_OT_detetrahedralize(bpy.types.Operator):
+    bl_idname = "marrow.detetrahedralize"
+    bl_label = "De-tetrahedralize"
+    bl_description = "Remove the cage and restore the object's original shape"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == "MESH"
+
+    def execute(self, context):
+        obj = context.active_object
+
+        # The session goes first. Restoring positions while a live session is
+        # still registered would have the next frame change overwrite them.
+        session = handlers.SESSIONS.pop(obj.name, None)
+        if session is not None:
+            session.free()
+        obj.marrow.live_enabled = False
+
+        had_cage = remove_cage(obj)
+        restored = restore_rest(obj.data)
+        had_bind = obj.data.attributes.get("marrow_bind_idx") is not None
+        clear_marrow_data(obj.data)
+
+        if not (had_cage or restored or had_bind):
+            self.report({"INFO"}, "Marrow: nothing to remove")
+            return {"CANCELLED"}
+
+        shape = "shape restored" if restored else "no stored shape to restore"
+        self.report({"INFO"}, f"Marrow: cage removed, {shape}")
         return {"FINISHED"}
 
 

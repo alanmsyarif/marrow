@@ -1,6 +1,6 @@
 """Marrow: GPU tetrahedral soft body for Blender."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # bpy is imported inside register()/unregister(), not at module scope. Any
 # `from .core.x import ...` executes this file first, so a top-level
@@ -19,6 +19,7 @@ def register():
         MARROW_OT_bake,
         MARROW_OT_collider_add,
         MARROW_OT_collider_remove,
+        MARROW_OT_detetrahedralize,
         MARROW_OT_free,
         MARROW_OT_live,
         MARROW_OT_tetrahedralize,
@@ -38,6 +39,7 @@ def register():
         MARROW_OT_collider_add,
         MARROW_OT_collider_remove,
         MARROW_OT_tetrahedralize,
+        MARROW_OT_detetrahedralize,
         MARROW_OT_bake,
         MARROW_OT_live,
         MARROW_OT_free,

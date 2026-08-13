@@ -187,6 +187,11 @@ class MARROW_PT_panel(bpy.types.Panel):
         cage.prop(settings, "resolution")
         cage.operator("marrow.tetrahedralize", icon="MESH_ICOSPHERE")
 
+        from .session import CAGE_SUFFIX
+
+        if bpy.data.objects.get(f"{obj.name}{CAGE_SUFFIX}") is not None:
+            cage.operator("marrow.detetrahedralize", icon="X")
+
         sim = layout.box()
         sim.label(text="Simulation")
         sim.prop(settings, "substeps")
