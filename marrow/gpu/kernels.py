@@ -60,6 +60,9 @@ void main()
     pos += vi.xyz * h + gravity * (h * h);
   }
   imageStore(p, c, vec4(pos, w));
+  // Contact marks from the previous substep are stale; the contact passes
+  // rewrite the ones that fire this substep.
+  imageStore(mark, c, vec4(0.0));
 }
 """
 
@@ -261,14 +264,16 @@ void main()
   vec3 pi = imageLoad(p, c).xyz;
   vec3 vel = (pi - xi.xyz) / h * damping;
 
-  // Velocity clamp, from the reference self-collision: no node may keep a
-  // velocity that crosses more than 0.2 of a contact thickness in a substep,
-  // or fast material tunnels through thin features and wads up instead of
-  // folding. Only the velocity carried into the next predict is limited -
-  // the position corrections of this substep stand. max_vel of 0 disables
-  // it, which keeps no-contact trajectories bit identical.
+  // Velocity clamp, from the reference self-collision: a node that a contact
+  // pass corrected this substep may not keep a velocity that crosses more
+  // than 0.2 of a contact thickness in a substep, or fast material tunnels
+  // through thin features and wads up instead of folding. Scoped to marked
+  // nodes so free fall is never capped - a global cap turned every drop into
+  // slow motion. Only the velocity carried into the next predict is limited;
+  // the position corrections of this substep stand. max_vel of 0 disables it,
+  // which keeps no-contact trajectories bit identical.
   float speed = length(vel);
-  if (max_vel > 0.0 && speed > max_vel) {
+  if (max_vel > 0.0 && imageLoad(mark, c).r > 0.0 && speed > max_vel) {
     vel *= max_vel / speed;
   }
 
@@ -478,7 +483,11 @@ void main()
   // Interior nodes cannot be the first point of contact on a closed cage,
   // and a pin outranks a self-contact. Both still write through.
   int si = int(imageLoad(surf_idx, c).r);
-  if (si < 0 || !(pi.w > 0.0)) { imageStore(out_p, c, pi); return; }
+  if (si < 0 || !(pi.w > 0.0)) {
+    imageStore(out_p, c, pi);
+    imageStore(mark_out, c, vec4(0.0));
+    return;
+  }
 
   vec3 rest_i = imageLoad(rest_pos, c).xyz;
   vec3 fix = vec3(0.0);
@@ -507,6 +516,10 @@ void main()
     float share = pi.w / (pi.w + pj.w);
     fix -= d * ((mind - dist) / dist) * share;
   }
+  // The mark is what scopes the integrate velocity clamp to nodes that are
+  // actually in contact, so free fall keeps its speed.
+  float hit = dot(fix, fix) > 1e-24 ? 1.0 : 0.0;
+  imageStore(mark_out, c, vec4(hit, 0.0, 0.0, 0.0));
   imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
 }
 """
@@ -539,7 +552,11 @@ void main()
 
   // Write through, always - see SELF_COLLIDE_SRC on the ping-pong.
   int si = int(imageLoad(surf_idx, c).r);
-  if (si < 0 || !(pi.w > 0.0)) { imageStore(out_p, c, pi); return; }
+  if (si < 0 || !(pi.w > 0.0)) {
+    imageStore(out_p, c, pi);
+    imageStore(mark_out, c, vec4(imageLoad(mark_in, c).r, 0.0, 0.0, 0.0));
+    return;
+  }
 
   vec3 fix = vec3(0.0);
   for (int s = 0; s < n_surf_other; ++s) {
@@ -553,6 +570,9 @@ void main()
     float share = pi.w / (pi.w + pj.w);
     fix -= d * ((thickness - dist) / dist) * share;
   }
+  // Carry the self-collision mark through and add this pass's own contact.
+  float hit = max(imageLoad(mark_in, c).r, dot(fix, fix) > 1e-24 ? 1.0 : 0.0);
+  imageStore(mark_out, c, vec4(hit, 0.0, 0.0, 0.0));
   imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
 }
 """

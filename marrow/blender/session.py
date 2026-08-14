@@ -57,6 +57,11 @@ class MarrowSession:
         self._last_simulated = None
         self.object_name = obj.name
         self._cache: dict[int, np.ndarray] = {}
+        # Cage node positions per frame, alongside the skinned render
+        # positions. The false-color display derives its per-tet metric from
+        # these on the CPU, so a mode switched on after a bake still colours
+        # every cached frame.
+        self._cache_nodes: dict[int, np.ndarray] = {}
         self._freed = False
 
         cage_obj = _cage_of(obj)
@@ -215,8 +220,13 @@ class MarrowSession:
                 f"Preservation."
             )
         self._cache[frame] = positions.astype(np.float32)
+        self._cache_nodes[frame] = self.solver.positions().astype(np.float32)
         self._last_simulated = frame
         return self._cache[frame]
+
+    def _clear_cache(self) -> None:
+        self._cache.clear()
+        self._cache_nodes.clear()
 
     def ensure_frame(self, frame: int, frame_start: int):
         """Positions for ``frame``, simulating forward when live.
@@ -254,12 +264,36 @@ class MarrowSession:
 
         obj.data.vertices.foreach_set("co", local.ravel().astype(np.float64))
         obj.data.update()
+        self._write_false_color(obj, int(frame))
         return True
+
+    def _write_false_color(self, obj, frame: int) -> None:
+        """Refresh the stretch attribute when a mode is active.
+
+        The metric is rotation- and translation-invariant, so comparing the
+        world-space cached cage against the world-space rest cage is safe
+        whatever the object transform does.
+        """
+        mode = getattr(getattr(obj, "marrow", None), "false_color", "OFF")
+        if mode == "OFF":
+            return
+        nodes = self._cache_nodes.get(frame)
+        if nodes is None:
+            return
+        from ..core import metric
+        from . import false_color
+
+        tet_values = metric.tet_stretch(
+            nodes, self.tetmesh.tets, self.tetmesh.nodes
+        )
+        false_color.write_attribute(
+            obj.data, metric.vertex_values(tet_values, self.bind_idx)
+        )
 
     def free(self) -> None:
         """Drop GPU references. Idempotent."""
         self.solver = None
-        self._cache.clear()
+        self._clear_cache()
         self._freed = True
 
 

@@ -42,6 +42,18 @@ class MARROW_UL_colliders(bpy.types.UIList):
         sub.prop(item, "sticky", text="", icon="SNAP_ON", toggle=True)
 
 
+def _update_false_color(self, context):
+    """Swap the false-color material in on mode change, the original back out."""
+    from . import false_color
+
+    obj = self.id_data
+    if self.false_color == "OFF":
+        false_color.restore(obj)
+    else:
+        false_color.apply(obj, self.false_color)
+        false_color.prime(obj, self.false_color)
+
+
 class MarrowSettings(bpy.types.PropertyGroup):
     resolution: bpy.props.FloatProperty(
         name="Resolution",
@@ -165,6 +177,25 @@ class MarrowSettings(bpy.types.PropertyGroup):
         default=0.0,
         unit="LENGTH",
     )
+    false_color: bpy.props.EnumProperty(
+        name="False Color",
+        description=(
+            "Rainbow-shade the surface by how far the material is stretched, "
+            "like Vellum's false color mode. Swaps a generated material into "
+            "slot 0 while active; Off restores the object's own material"
+        ),
+        items=[
+            ("OFF", "Off", "Show the object's own material"),
+            (
+                "STRETCH",
+                "Stretch",
+                "Edge stretch ratio: 1 at rest, hot where pulled past rest "
+                "length, cold where compressed",
+            ),
+        ],
+        default="OFF",
+        update=_update_false_color,
+    )
 
 
 class MARROW_PT_panel(bpy.types.Panel):
@@ -238,6 +269,10 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = box.row()
         row.enabled = any(slot.sticky and slot.object for slot in settings.colliders)
         row.prop(settings, "stick_break")
+
+        display = layout.box()
+        display.label(text="Display", icon="COLOR")
+        display.prop(settings, "false_color")
 
         from . import handlers
 

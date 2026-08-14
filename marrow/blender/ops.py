@@ -3,7 +3,7 @@
 import bpy
 import numpy as np
 
-from ..blender import group, handlers
+from ..blender import false_color, group, handlers
 from ..blender.inside_bvh import cell_mask_from_object
 from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
 from ..blender.storage import (
@@ -150,10 +150,14 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
         if session is not None:
             session.free()
         obj.marrow.live_enabled = False
+        # The update callback puts the object's own material back in slot 0.
+        if obj.marrow.false_color != "OFF":
+            obj.marrow.false_color = "OFF"
 
         remove_cage(obj)
         restored = restore_rest(obj.data)
         clear_marrow_data(obj.data)
+        false_color.clear_attribute(obj.data)
 
         shape = "shape restored" if restored else "no stored shape to restore"
         self.report({"INFO"}, f"Marrow: cage removed, {shape}")

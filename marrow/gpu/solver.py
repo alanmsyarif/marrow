@@ -112,6 +112,11 @@ class GPUSolver:
         self.tex_tets_orig = upload_verified(pack_tets(mesh.tets))
         # One flag per tet. Zero means intact; set once, never cleared.
         self.tex_torn = blank(mesh.n_tets, fmt="R32F")
+        # One flag per node: set by the contact passes when a node received a
+        # correction this substep, zeroed by predict. Scopes the integrate
+        # velocity clamp to nodes actually in contact. Always allocated so
+        # predict and integrate can bind it unconditionally.
+        self.tex_mark = blank(self.n_nodes, fmt="R32F")
         # One counter per node: how many of its tets are still intact. The tear
         # rule reads it to refuse to orphan a node - see SOLVE_SRC. Incidence
         # is the same whichever tet order it is counted over.
@@ -145,6 +150,7 @@ class GPUSolver:
             self.tex_surf = upload_verified(pack_scalar(surf), fmt="R32F")
             self.tex_surf_idx = upload_verified(pack_scalar(idx), fmt="R32F")
             self.tex_p2 = blank(self.n_nodes)
+            self.tex_mark2 = blank(self.n_nodes, fmt="R32F")
 
         if surf is not None and surf.shape[0] > 1 and self.self_distance > 0.0:
             # Rest node positions. tex_rest is per-tet dm_inv and rest volume;
@@ -160,7 +166,8 @@ class GPUSolver:
                  ("RGBA32F", "FLOAT_2D", "out_p", {"WRITE"}),
                  ("RGBA32F", "FLOAT_2D", "rest_pos", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf", {"READ"}),
-                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"})],
+                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"}),
+                 ("R32F", "FLOAT_2D", "mark_out", {"WRITE"})],
                 [("FLOAT", "thickness"), ("INT", "n_nodes"), ("INT", "n_surf")],
             )
 
@@ -171,7 +178,9 @@ class GPUSolver:
                  ("RGBA32F", "FLOAT_2D", "out_p", {"WRITE"}),
                  ("RGBA32F", "FLOAT_2D", "x_other", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf_other", {"READ"}),
-                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"})],
+                 ("R32F", "FLOAT_2D", "surf_idx", {"READ"}),
+                 ("R32F", "FLOAT_2D", "mark_in", {"READ"}),
+                 ("R32F", "FLOAT_2D", "mark_out", {"WRITE"})],
                 [("FLOAT", "thickness"), ("INT", "n_nodes"),
                  ("INT", "n_surf_other")],
             )
@@ -180,7 +189,8 @@ class GPUSolver:
             "predict", kernels.PREDICT_SRC,
             [("RGBA32F", "FLOAT_2D", "x", {"READ"}),
              ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "p", {"WRITE"})],
+             ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
+             ("R32F", "FLOAT_2D", "mark", {"WRITE"})],
             [("FLOAT", "h"), ("VEC3", "gravity"), ("INT", "n_nodes")],
         )
         self.sh_solve = kernels.build(
@@ -215,7 +225,8 @@ class GPUSolver:
             "integrate", kernels.INTEGRATE_SRC,
             [("RGBA32F", "FLOAT_2D", "x", {"READ", "WRITE"}),
              ("RGBA32F", "FLOAT_2D", "p", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"})],
+             ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"}),
+             ("R32F", "FLOAT_2D", "mark", {"READ"})],
             [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
              ("FLOAT", "max_vel")],
         )
@@ -291,6 +302,7 @@ class GPUSolver:
         self.sh_predict.image("x", self.tex_x)
         self.sh_predict.image("v", self.tex_v)
         self.sh_predict.image("p", self.tex_p)
+        self.sh_predict.image("mark", self.tex_mark)
         self.sh_predict.uniform_float("h", h)
         self.sh_predict.uniform_float("gravity", tuple(self.params.gravity))
         self.sh_predict.uniform_int("n_nodes", self.n_nodes)
@@ -326,6 +338,7 @@ class GPUSolver:
         self.sh_integrate.image("x", self.tex_x)
         self.sh_integrate.image("p", self.tex_p)
         self.sh_integrate.image("v", self.tex_v)
+        self.sh_integrate.image("mark", self.tex_mark)
         self.sh_integrate.uniform_float("h", h)
         self.sh_integrate.uniform_float("damping", self.params.damping)
         self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
@@ -357,11 +370,13 @@ class GPUSolver:
         self.sh_self.image("rest_pos", self.tex_rest_pos)
         self.sh_self.image("surf", self.tex_surf)
         self.sh_self.image("surf_idx", self.tex_surf_idx)
+        self.sh_self.image("mark_out", self.tex_mark2)
         self.sh_self.uniform_float("thickness", self.self_distance)
         self.sh_self.uniform_int("n_nodes", self.n_nodes)
         self.sh_self.uniform_int("n_surf", self.n_surf)
         gpu.compute.dispatch(self.sh_self, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
+        self.tex_mark, self.tex_mark2 = self.tex_mark2, self.tex_mark
 
     def _dispatch_body_collision(self, node_groups, other) -> None:
         """Push this body's surface nodes out of ``other``.
@@ -378,11 +393,14 @@ class GPUSolver:
         self.sh_body.image("x_other", other.tex_x)
         self.sh_body.image("surf_other", other.tex_surf)
         self.sh_body.image("surf_idx", self.tex_surf_idx)
+        self.sh_body.image("mark_in", self.tex_mark)
+        self.sh_body.image("mark_out", self.tex_mark2)
         self.sh_body.uniform_float("thickness", self.body_distance)
         self.sh_body.uniform_int("n_nodes", self.n_nodes)
         self.sh_body.uniform_int("n_surf_other", other.n_surf)
         gpu.compute.dispatch(self.sh_body, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
+        self.tex_mark, self.tex_mark2 = self.tex_mark2, self.tex_mark
 
     def _sdf_for(self, field):
         """The 3D texture for a baked field, uploaded once and kept."""

@@ -95,7 +95,7 @@ def _step_group(members, frame: int) -> None:
 
 def _restart(members, frame_start: int) -> None:
     for member in members:
-        member._cache.clear()
+        member._clear_cache()
         member.refresh_from_object()
         member._build_solver()
         member._last_simulated = frame_start - 1
