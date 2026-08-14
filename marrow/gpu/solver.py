@@ -216,7 +216,8 @@ class GPUSolver:
             [("RGBA32F", "FLOAT_2D", "x", {"READ", "WRITE"}),
              ("RGBA32F", "FLOAT_2D", "p", {"READ"}),
              ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"})],
-            [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes")],
+            [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
+             ("FLOAT", "max_vel")],
         )
 
     def _lift_out_of_ground(self, nodes: np.ndarray) -> np.ndarray:
@@ -328,6 +329,13 @@ class GPUSolver:
         self.sh_integrate.uniform_float("h", h)
         self.sh_integrate.uniform_float("damping", self.params.damping)
         self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
+        # 0.2 * thickness / h, from the reference self-collision: a node may
+        # not cross more than a fifth of a contact thickness per substep, or
+        # fast material tunnels through thin features and wads up. The larger
+        # of the two active contact distances; zero disables the clamp.
+        thickness = max(self.self_distance, self.body_distance)
+        max_vel = 0.2 * thickness / h if thickness > 0.0 else 0.0
+        self.sh_integrate.uniform_float("max_vel", max_vel)
         gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
 
     def _dispatch_self_collision(self, node_groups) -> None:

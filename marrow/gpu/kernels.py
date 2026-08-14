@@ -261,6 +261,17 @@ void main()
   vec3 pi = imageLoad(p, c).xyz;
   vec3 vel = (pi - xi.xyz) / h * damping;
 
+  // Velocity clamp, from the reference self-collision: no node may keep a
+  // velocity that crosses more than 0.2 of a contact thickness in a substep,
+  // or fast material tunnels through thin features and wads up instead of
+  // folding. Only the velocity carried into the next predict is limited -
+  // the position corrections of this substep stand. max_vel of 0 disables
+  // it, which keeps no-contact trajectories bit identical.
+  float speed = length(vel);
+  if (max_vel > 0.0 && speed > max_vel) {
+    vel *= max_vel / speed;
+  }
+
   imageStore(v, c, vec4(vel, 0.0));
   imageStore(x, c, vec4(pi, xi.w));
 }
