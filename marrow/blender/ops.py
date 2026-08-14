@@ -5,8 +5,10 @@ import numpy as np
 
 from ..blender import group, handlers
 from ..blender.inside_bvh import cell_mask_from_object
-from ..blender.session import MarrowSession
+from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
 from ..blender.storage import (
+    BIND_IDX,
+    REST_KEY,
     clear_marrow_data,
     restore_rest,
     write_bind,
@@ -19,8 +21,6 @@ from ..core.lattice import build_lattice
 from ..core.solver_ref import SolverParams
 from ..gpu import capability
 from ..gpu.solver import MarrowNaNError
-
-CAGE_SUFFIX = "_marrow_cage"
 
 
 class MARROW_OT_tetrahedralize(bpy.types.Operator):
@@ -108,7 +108,7 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
 
 def remove_cage(obj) -> bool:
     """Delete ``obj``'s cage object and its mesh. False if it had none."""
-    cage = bpy.data.objects.get(f"{obj.name}{CAGE_SUFFIX}")
+    cage = find_cage(obj)
     if cage is None:
         return False
     cage_mesh = cage.data
@@ -132,6 +132,18 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
 
+        # Look before touching anything. On a plain mesh this operator must be
+        # a true no-op, not flip Live off and free a session as side effects
+        # of reporting there was nothing to do.
+        has_work = (
+            find_cage(obj) is not None
+            or obj.data.attributes.get(REST_KEY) is not None
+            or obj.data.attributes.get(BIND_IDX) is not None
+        )
+        if not has_work:
+            self.report({"INFO"}, "Marrow: nothing to remove")
+            return {"CANCELLED"}
+
         # The session goes first. Restoring positions while a live session is
         # still registered would have the next frame change overwrite them.
         session = handlers.SESSIONS.pop(obj.name, None)
@@ -139,14 +151,9 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
             session.free()
         obj.marrow.live_enabled = False
 
-        had_cage = remove_cage(obj)
+        remove_cage(obj)
         restored = restore_rest(obj.data)
-        had_bind = obj.data.attributes.get("marrow_bind_idx") is not None
         clear_marrow_data(obj.data)
-
-        if not (had_cage or restored or had_bind):
-            self.report({"INFO"}, "Marrow: nothing to remove")
-            return {"CANCELLED"}
 
         shape = "shape restored" if restored else "no stored shape to restore"
         self.report({"INFO"}, f"Marrow: cage removed, {shape}")
@@ -242,6 +249,7 @@ class MARROW_OT_bake(bpy.types.Operator):
         try:
             sessions = [session_for(body) for body in bodies]
         except ValueError as exc:
+            handlers.register_handler()
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
 
@@ -252,7 +260,19 @@ class MARROW_OT_bake(bpy.types.Operator):
         except MarrowNaNError as exc:
             for session in sessions:
                 session.free()
+            # Re-arm the handler so live simulation, which was torn down for
+            # the bake, rebuilds itself on the next frame change.
+            handlers.register_handler()
             self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            # A wedged GPU queue raises StaleReadError, not MarrowNaNError.
+            # Report it the same way rather than leaking the sessions and
+            # leaving the frame handler unregistered behind a traceback.
+            for session in sessions:
+                session.free()
+            handlers.register_handler()
+            self.report({"ERROR"}, f"Marrow bake failed: {exc}")
             return {"CANCELLED"}
 
         for session in sessions:
@@ -309,6 +329,14 @@ class MARROW_OT_live(bpy.types.Operator):
                 handlers.unregister_handler()
             self.report({"INFO"}, "Marrow: live simulation off")
             return {"FINISHED"}
+
+        if find_cage(obj) is None:
+            self.report(
+                {"ERROR"},
+                "Marrow: run Tetrahedralize in the Marrow panel first; there "
+                "is no cage to simulate.",
+            )
+            return {"CANCELLED"}
 
         if not capability.gpu_available():
             self.report(

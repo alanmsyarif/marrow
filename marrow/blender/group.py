@@ -173,7 +173,7 @@ def partners_in_scene(obj) -> list:
     """
     import bpy
 
-    from .session import CAGE_SUFFIX
+    from .session import find_cage
 
     settings = getattr(obj, "marrow", None)
     if settings is None or not settings.body_collision:
@@ -185,7 +185,7 @@ def partners_in_scene(obj) -> list:
         other_settings = getattr(other, "marrow", None)
         if other_settings is None or not other_settings.body_collision:
             continue
-        if bpy.data.objects.get(f"{other.name}{CAGE_SUFFIX}") is None:
+        if find_cage(other) is None:
             continue
         found.append(other)
     return sorted(found, key=lambda o: o.name)

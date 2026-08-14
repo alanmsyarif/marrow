@@ -14,7 +14,7 @@ limit.
 import numpy as np
 from mathutils import Matrix
 
-from ..blender.storage import read_bind, read_tetmesh
+from ..blender.storage import TETS_KEY, read_bind, read_tetmesh
 from ..core.solver_ref import SolverParams
 from ..gpu.solver import GPUSolver, MarrowNaNError
 
@@ -263,10 +263,36 @@ class MarrowSession:
         self._freed = True
 
 
-def _cage_of(obj):
+def find_cage(obj):
+    """The object's Marrow cage object, or None.
+
+    The cage is parented to the object at tetrahedralize time, so look among
+    its children rather than by name: renaming the object does not rename the
+    cage, and a name lookup silently loses it - or worse, finds an unrelated
+    object that happens to reuse the expected name. The TETS_KEY check is
+    what tells a real cage apart from something merely named like one.
+    """
     import bpy
 
+    for child in obj.children:
+        data = getattr(child, "data", None)
+        if (
+            child.name.endswith(CAGE_SUFFIX)
+            and data is not None
+            and TETS_KEY in data.keys()
+        ):
+            return child
+    # Fallback for a cage that was unparented by hand.
     cage = bpy.data.objects.get(f"{obj.name}{CAGE_SUFFIX}")
+    if cage is not None:
+        data = getattr(cage, "data", None)
+        if data is not None and TETS_KEY in data.keys():
+            return cage
+    return None
+
+
+def _cage_of(obj):
+    cage = find_cage(obj)
     if cage is None:
         raise ValueError(
             f"{obj.name!r} has no Marrow cage. Run Tetrahedralize in the "

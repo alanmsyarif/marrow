@@ -12,7 +12,29 @@ every session, and marrow.unregister() must call it.
 
 import bpy
 
+from .storage import BIND_IDX
+
 SESSIONS: dict = {}
+
+_atexit_installed = False
+
+
+def _install_atexit_guard() -> None:
+    """Free GPU state at interpreter exit, while the context is still alive.
+
+    Blender does not call unregister() on quit, and module globals are
+    collected after the GPU context is torn down - a GPUTexture freed that
+    late crashes the whole process at shutdown (EXCEPTION_ACCESS_VIOLATION in
+    MSVCP140.dll, measured). atexit callbacks run early enough in
+    finalisation that freeing still works.
+    """
+    global _atexit_installed
+    if _atexit_installed:
+        return
+    import atexit
+
+    atexit.register(free_all)
+    _atexit_installed = True
 
 
 def ensure_sessions(scene) -> None:
@@ -21,7 +43,7 @@ def ensure_sessions(scene) -> None:
     Live is the default, so a file can be reopened and played without anyone
     pressing a button. Building a session is not cheap, hence once per object.
     """
-    from .session import CAGE_SUFFIX, MarrowSession
+    from .session import MarrowSession, find_cage
 
     for obj in scene.objects:
         settings = getattr(obj, "marrow", None)
@@ -29,7 +51,7 @@ def ensure_sessions(scene) -> None:
             continue
         if obj.name in SESSIONS:
             continue
-        if bpy.data.objects.get(f"{obj.name}{CAGE_SUFFIX}") is None:
+        if find_cage(obj) is None:
             continue
         try:
             session = MarrowSession(obj)
@@ -47,10 +69,17 @@ def on_frame_change(scene, depsgraph=None) -> None:
     frame = scene.frame_current
     for name, session in list(SESSIONS.items()):
         obj = bpy.data.objects.get(name)
-        if obj is None:
-            # The object was renamed or deleted; the session is stale but
-            # harmless. Skipping beats raising inside a frame handler, which
-            # Blender would surface on every single frame change.
+        mesh = getattr(obj, "data", None) if obj is not None else None
+        if mesh is None or mesh.attributes.get(BIND_IDX) is None:
+            # The object was deleted or renamed, or an unrelated mesh now owns
+            # the name. Kept around, the session only leaks its GPU memory;
+            # worse, if a different object reuses the name it would have
+            # another body's cached frames written into the wrong mesh. A
+            # renamed object has already been given a fresh session under its
+            # new name by ensure_sessions above, so dropping this one loses
+            # nothing.
+            session.free()
+            del SESSIONS[name]
             continue
         try:
             session.write_to_mesh(obj, frame, frame_start=scene.frame_start)
@@ -63,6 +92,7 @@ def on_frame_change(scene, depsgraph=None) -> None:
 
 def register_handler() -> None:
     """Idempotent: Blender will happily hold the same handler twice."""
+    _install_atexit_guard()
     if on_frame_change not in bpy.app.handlers.frame_change_post:
         bpy.app.handlers.frame_change_post.append(on_frame_change)
 

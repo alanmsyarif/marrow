@@ -13,39 +13,7 @@ import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-_EPS = 1e-6
-# Three directions, none axis-aligned and none a multiple of another, so a ray
-# that grazes an edge or a vertex is outvoted rather than believed.
-_RAYS = (
-    Vector((0.5773502691896258, 0.4082482904638631, 0.7071067811865476)),
-    Vector((-0.3333333333333333, 0.6666666666666666, -0.6666666666666666)),
-    Vector((0.8017837257372732, -0.5345224838248488, 0.2672612419124244)),
-)
-
-
-def _hits_odd(bvh, point, ray) -> bool:
-    hits = 0
-    origin = point.copy()
-    while True:
-        location, _normal, _index, _dist = bvh.ray_cast(origin, ray)
-        if location is None:
-            break
-        hits += 1
-        origin = location + ray * _EPS
-    return hits % 2 == 1
-
-
-def _is_inside(bvh, point) -> bool:
-    """Majority of three ray-parity tests.
-
-    inside_bvh casts one fixed ray, which is enough for cage occupancy, where
-    cell centres are spaced a whole Resolution apart. An SDF samples densely
-    right against the surface, and there a single ray grazing a face or an
-    edge miscounts: measured 113 wrong signs on a UV sphere at cell 0.1, and
-    a wrong sign is a 2x radius error in the field. Three rays fix it.
-    """
-    votes = sum(1 for ray in _RAYS if _hits_odd(bvh, point, ray))
-    return votes >= 2
+from ..blender.inside_bvh import is_inside as _is_inside
 
 
 MIN_CELLS = 16
