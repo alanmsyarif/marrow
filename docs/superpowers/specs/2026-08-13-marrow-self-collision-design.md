@@ -171,7 +171,7 @@ Integration:
 
 Deliberate simplifications, each with its upgrade path.
 
-- **Velocity clamp.** Built 2026-08-14 after a stiff thin slab dropped onto the ground wadded its impact corner: `integrate` caps the carried velocity at `0.2 * thickness / h`, thickness the larger of the active self/body contact distances, 0 disabling it so no-contact trajectories stay bit identical. The cap limits the velocity carried into the next predict; the position corrections of the substep that produced it stand.
+- **Velocity clamp.** Built 2026-08-14 after a stiff thin slab dropped onto the ground wadded its impact corner, then reworked the same day: a global cap turned every drop into slow motion. Final form: predict zeroes a per-node contact mark, the self/body collide passes set it on nodes they correct, and integrate caps the carried velocity of marked nodes at `0.2 * thickness / h` (the larger of the active self/body contact distances; 0 disables). Free fall is never capped; the position corrections of the substep stand.
 - **Quadratic in surface nodes.** Fine to about 20k surface nodes (roughly Resolution 0.03 on a unit ball), where it would reach ~130 ms/frame. Past that, a CPU spatial hash with per-frame neighbour upload, accepting the readback cost.
 - **Node-node only.** No edge-edge or node-triangle contact. A feature thinner than the node spacing can slip through between nodes; the thickness default of one Resolution is what keeps that from happening in practice.
 - **Jacobi converges slower than Gauss-Seidel.** With many simultaneous contacts some residual penetration remains at the end of a substep. Substeps mitigate it.
