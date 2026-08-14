@@ -5,7 +5,7 @@ from _oracle_harness import CUBE, assert_close
 from marrow.core.layout import pack_nodes, unpack_vec3
 from marrow.core.solver_ref import make_state
 from marrow.gpu.kernels import INTEGRATE_SRC, build
-from marrow.gpu.textures import download, flush, make_flush_shader, upload
+from marrow.gpu.textures import blank, download, flush, make_flush_shader, upload
 
 gpu.init()
 
@@ -15,6 +15,7 @@ IMAGES = [
     ("RGBA32F", "FLOAT_2D", "x", {"READ", "WRITE"}),
     ("RGBA32F", "FLOAT_2D", "p", {"READ"}),
     ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"}),
+    ("R32F", "FLOAT_2D", "mark", {"READ"}),
 ]
 PUSH = [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
         ("FLOAT", "max_vel")]
@@ -27,11 +28,14 @@ def _run_integrate(state, predicted, h, damping):
     tex_x = upload(pack_nodes(state.nodes, state.inv_mass))
     tex_p = upload(pack_nodes(predicted, state.inv_mass))
     tex_v = upload(pack_nodes(state.velocities, np.zeros(n)))
+    # Zeroed marks: the oracle has no contact passes, so nothing is clamped.
+    tex_mark = blank(n, fmt="R32F")
 
     shader.bind()
     shader.image("x", tex_x)
     shader.image("p", tex_p)
     shader.image("v", tex_v)
+    shader.image("mark", tex_mark)
     shader.uniform_float("h", h)
     shader.uniform_float("damping", damping)
     shader.uniform_int("n_nodes", n)

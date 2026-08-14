@@ -15,6 +15,7 @@ IMAGES = [
     ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
     ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
     ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
+    ("R32F", "FLOAT_2D", "mark", {"WRITE"}),
 ]
 PUSH = [("FLOAT", "h"), ("VEC3", "gravity"), ("INT", "n_nodes")]
 
@@ -26,11 +27,13 @@ def _run_predict(state, params, h):
     tex_x = upload(pack_nodes(state.nodes, state.inv_mass))
     tex_v = upload(pack_nodes(state.velocities, np.zeros(n)))
     tex_p = blank(n)
+    tex_mark = blank(n, fmt="R32F")
 
     shader.bind()
     shader.image("x", tex_x)
     shader.image("v", tex_v)
     shader.image("p", tex_p)
+    shader.image("mark", tex_mark)
     shader.uniform_float("h", h)
     shader.uniform_float("gravity", tuple(params.gravity))
     shader.uniform_int("n_nodes", n)
@@ -79,11 +82,13 @@ def test_predict_does_not_write_past_the_node_count():
     tex_x = upload(pack_nodes(state.nodes, state.inv_mass))
     tex_v = upload(pack_nodes(state.velocities, np.zeros(n)))
     tex_p = blank(n)
+    tex_mark = blank(n, fmt="R32F")
 
     shader.bind()
     shader.image("x", tex_x)
     shader.image("v", tex_v)
     shader.image("p", tex_p)
+    shader.image("mark", tex_mark)
     shader.uniform_float("h", 1.0)
     shader.uniform_float("gravity", (0.0, 0.0, -9.81))
     shader.uniform_int("n_nodes", n)

@@ -1,80 +1,113 @@
-"""Velocity clamp: no node keeps a speed above 0.2 thicknesses per substep.
+"""Velocity clamp: contact-corrected nodes keep at most 0.2 thicknesses per substep.
 
 The reference self-collision caps particle velocity at 0.2 * thickness / h so
 fast material cannot tunnel through thin contact features and wad up instead
-of folding. Marrow applies the same cap in integrate, active whenever a
-contact thickness (self or body) is set, inert otherwise.
+of folding. Marrow applies the same cap in integrate, but only to nodes the
+contact passes marked this substep - a global cap turned every drop into
+slow motion, so free fall keeps its speed.
 
 The cap limits the velocity carried into the next predict; the position
-corrections of the substep that produced it stand. The tests therefore load
-a huge velocity, take one step to let integrate clamp it, and measure the
-step after.
+corrections of the substep that produced it stand.
 """
 
 import numpy as np
 
 from _oracle_harness import BLOCK
-from marrow.core.layout import pack_nodes
+from marrow.core.layout import pack_nodes, unpack_vec3
 from marrow.core.solver_ref import SolverParams, make_state
+from marrow.core.tetmesh import TetMesh
 from marrow.gpu.solver import GPUSolver
-from marrow.gpu.textures import upload
+from marrow.gpu.textures import download, upload
 
 THICK = 0.2
 FAST = 100.0
 
+_UNIT = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
 
-def _fast_block(distance, body=False):
-    """The whole block translating rigidly at FAST m/s, no contacts.
 
-    Every node gets the same velocity, so relative positions never change and
-    the rest-distance gate keeps self-collision out of the measurement. The
-    first step consumes the raw velocity and clamps it; the caller measures
-    the second.
-    """
+def _two_tets(gap):
+    """Two disjoint unit tets, the second offset ``gap`` along x."""
+    nodes = np.vstack([_UNIT, _UNIT + np.array([gap, 0.0, 0.0])])
+    return TetMesh(nodes, np.array([[0, 1, 2, 3], [4, 5, 6, 7]], dtype=np.int32))
+
+
+def _inert(mesh, distance):
     params = SolverParams(
         gravity=(0.0, 0.0, 0.0), substeps=1, mu=0.0, lam=0.0, damping=1.0
     )
-    inv_mass = make_state(BLOCK.nodes).inv_mass
-    kwargs = {"body_distance": distance} if body else {"self_distance": distance}
-    solver = GPUSolver(BLOCK, inv_mass, params, **kwargs)
+    return GPUSolver(mesh, make_state(mesh.nodes).inv_mass, params,
+                     self_distance=distance)
 
+
+def _velocities(solver):
+    return unpack_vec3(download(solver.tex_v), solver.n_nodes)
+
+
+def test_fast_free_motion_is_not_capped_even_with_thickness_active():
+    """The slow-motion regression: no contact, no cap.
+
+    The whole block translates rigidly, so the rest-distance gate keeps the
+    self-collision pass out of it and no node is marked.
+    """
+    solver = _inert(BLOCK, THICK)
     vel = np.zeros_like(BLOCK.nodes)
     vel[:, 0] = FAST
     solver.tex_v = upload(pack_nodes(vel, np.zeros(BLOCK.n_nodes)))
-    return solver
 
-
-def _second_step_move(solver):
     solver.step()
-    mid = solver.positions()
-    solver.step()
-    return float(np.abs(solver.positions() - mid)[:, 0].max())
-
-
-def test_a_fast_body_is_capped_at_a_fifth_of_the_thickness_per_substep():
-    solver = _fast_block(THICK)
-    moved = _second_step_move(solver)
-    cap = 0.2 * THICK
-    assert moved < cap * 1.01, (
-        f"clamp did not hold: moved {moved:.4f} per substep, cap {cap:.4f}"
+    v = _velocities(solver)
+    assert np.allclose(np.linalg.norm(v, axis=1), FAST, rtol=1e-2), (
+        f"free fall was capped: speeds {np.linalg.norm(v, axis=1)}"
     )
-    # The body still translates, it is merely capped.
-    assert moved > 0.9 * cap, f"clamp over-limited: moved {moved:.4f}"
 
 
-def test_body_collision_thickness_engages_the_cap_too():
-    solver = _fast_block(THICK, body=True)
-    moved = _second_step_move(solver)
-    assert moved < 0.2 * THICK * 1.01, (
-        f"body thickness did not engage the clamp: moved {moved:.4f}"
+def test_only_the_node_in_contact_is_capped():
+    """A node the self-collision pass corrects loses its speed; its
+    uninvolved neighbour, moving at the same velocity, does not.
+
+    -2 m/s covers 1/12 m per substep, under the 0.2 thickness, so the pair
+    is inside the contact distance after predict and the pass fires. A
+    faster crash would tunnel clean through in this single substep - the
+    clamp exists to keep that from happening on every substep after the
+    first contact.
+    """
+    mesh = _two_tets(10.0)
+    solver = _inert(mesh, THICK)
+
+    now = mesh.nodes.copy()
+    now[4:] -= np.array([10.0 - (1.0 + 0.5 * THICK), 0.0, 0.0])
+    inv_mass = make_state(mesh.nodes).inv_mass
+    solver.tex_x = upload(pack_nodes(now, inv_mass))
+    vel = np.zeros_like(now)
+    vel[4:, 0] = -2.0
+    solver.tex_v = upload(pack_nodes(vel, np.zeros(mesh.n_nodes)))
+
+    solver.step()
+    v = _velocities(solver)
+    cap = 0.2 * THICK / solver.params.dt
+    assert np.linalg.norm(v[4]) < cap * 1.01, (
+        f"contacted node kept {np.linalg.norm(v[4]):.3f} m/s, cap {cap:.3f}"
+    )
+    assert np.allclose(np.linalg.norm(v[5]), 2.0, rtol=1e-2), (
+        "an unmarked node at the same speed must not be capped"
     )
 
 
 def test_no_contact_thickness_means_no_cap():
-    solver = _fast_block(0.0)
-    moved = _second_step_move(solver)
-    want = FAST * solver.params.dt
-    assert np.isclose(moved, want, rtol=1e-3), (
-        f"no-contact trajectory changed by the clamp: moved {moved:.4f}, "
-        f"want {want:.4f}"
+    """Same crash, feature off: the clamp must not fire without a thickness."""
+    mesh = _two_tets(10.0)
+    solver = _inert(mesh, 0.0)
+
+    now = mesh.nodes.copy()
+    now[4:] -= np.array([10.0 - (1.0 + 0.5 * THICK), 0.0, 0.0])
+    inv_mass = make_state(mesh.nodes).inv_mass
+    solver.tex_x = upload(pack_nodes(now, inv_mass))
+    vel = np.zeros_like(now)
+    vel[4:, 0] = -2.0
+    solver.tex_v = upload(pack_nodes(vel, np.zeros(mesh.n_nodes)))
+
+    solver.step()
+    v = _velocities(solver)
+    assert np.allclose(np.linalg.norm(v[4]), 2.0, rtol=1e-2), (
+        f"velocity changed with the feature off: {np.linalg.norm(v[4]):.3f}"
     )

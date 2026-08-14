@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.6.2.zip
+blender --command extension install-file -r user_default --enable dist/marrow-0.7.1.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -69,6 +69,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
 | **Colliders** | The list of objects this body collides against, and whether each one is sticky. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
+| **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
 
 ### Colliders
 
@@ -151,6 +152,12 @@ A cage that starts below the ground plane is lifted onto it, rigidly, before the
 
 This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at 226 m/s, which is past any tear threshold and shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.
 
+### False color
+
+**False Color**, in the Display box, rainbow-shades the render surface by how far the material is stretched, in the style of Vellum's false color mode. The value is the edge stretch ratio: 1 at rest, hot where pulled past rest length, cold where compressed.
+
+While stretch display is active a generated emission material sits in slot 0; choosing **Off** puts the object's own material back exactly as it was, including on an object that had no material at all, and De-tetrahedralize cleans up too. The scalar is computed per tet on the CPU from the cached cage positions, so switching the mode on after a bake still colours every cached frame.
+
 ## How it works
 
 | Stage | Where |
@@ -195,7 +202,7 @@ Core geometry and solver maths live in `marrow/core/` and never import `bpy`, wh
 blender -b --factory-startup --python tests/blender/run_tests.py
 ```
 
-**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 171 tests and they all pass on 5.2.
+**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 176 tests and they all pass on 5.2.
 
 Running a single module rather than `run_tests.py` needs a `gpu.init()` of your own first: 5.2 requires it, and several modules rely on some earlier module in the full run having already called it.
 

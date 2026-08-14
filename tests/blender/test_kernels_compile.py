@@ -17,6 +17,7 @@ def test_predict_kernel_compiles():
             ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
             ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
             ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
+            ("R32F", "FLOAT_2D", "mark", {"WRITE"}),
         ],
         push_constants=[("FLOAT", "h"), ("VEC3", "gravity"), ("INT", "n_nodes")],
     )
