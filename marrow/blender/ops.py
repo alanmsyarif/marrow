@@ -165,17 +165,59 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
 
 
 def collider_objects_of(obj):
-    """(object, shape, sticky) for each usable collider slot on ``obj``.
+    """(object, shape, sticky) for every collider in ``obj``'s collection.
 
-    Empty slots and a body pointed at itself are skipped rather than treated
-    as errors - both are just a half-finished edit in the list.
+    ``all_objects`` rather than ``objects``, so a collection of collections
+    works the way the outliner suggests it should. The body itself is skipped
+    rather than treated as an error - a body sitting in its own collider
+    collection is just a half-finished edit.
     """
-    pairs = []
-    for slot in obj.marrow.colliders:
-        if slot.object is None or slot.object is obj:
+    collection = obj.marrow.collider_collection
+    if collection is None:
+        return []
+    return [
+        (ob, ob.marrow_collider.shape, ob.marrow_collider.sticky)
+        for ob in collection.all_objects
+        if ob is not obj
+    ]
+
+
+def _collection_for(obj):
+    """``obj``'s collider collection, made and shown in the outliner if new."""
+    settings = obj.marrow
+    if settings.collider_collection is None:
+        collection = bpy.data.collections.new(f"{obj.name} Colliders")
+        scene = getattr(bpy.context, "scene", None)
+        if scene is not None:
+            # Unlinked, it would be invisible in the outliner and impossible
+            # to edit by hand, which is the whole point of a collection.
+            scene.collection.children.link(collection)
+        settings.collider_collection = collection
+    return settings.collider_collection
+
+
+@bpy.app.handlers.persistent
+def migrate_collider_slots(*_args):
+    """Carry a pre-collection .blend over to the collider collection.
+
+    Registered as a load_post handler. Idempotent: a body whose slots are
+    already drained does nothing, so it is safe on every load. Shape and
+    stickiness used to be per slot and are per object now, so a collider
+    shared by two bodies that disagreed keeps whichever body migrates last.
+    """
+    for obj in bpy.data.objects:
+        settings = getattr(obj, "marrow", None)
+        if settings is None or not settings.colliders:
             continue
-        pairs.append((slot.object, slot.shape, slot.sticky))
-    return pairs
+        collection = _collection_for(obj)
+        for slot in settings.colliders:
+            if slot.object is None or slot.object is obj:
+                continue
+            slot.object.marrow_collider.shape = slot.shape
+            slot.object.marrow_collider.sticky = slot.sticky
+            if slot.object.name not in collection.objects:
+                collection.objects.link(slot.object)
+        settings.colliders.clear()
 
 
 def session_for(obj) -> MarrowSession:
@@ -192,9 +234,6 @@ def session_for(obj) -> MarrowSession:
         ground_z=float(settings.ground_z),
         ground_on=bool(settings.ground_enabled),
         collider_objects=collider_objects_of(obj),
-        tear_threshold=(
-            float(settings.tear_threshold) if settings.tearing_enabled else 0.0
-        ),
         stick_break=float(settings.stick_break),
         self_distance=thickness if settings.self_collision else 0.0,
         body_distance=thickness if settings.body_collision else 0.0,
@@ -365,7 +404,10 @@ class MARROW_OT_live(bpy.types.Operator):
 class MARROW_OT_collider_add(bpy.types.Operator):
     bl_idname = "marrow.collider_add"
     bl_label = "Add Collider"
-    bl_description = "Add a collider slot to this soft body"
+    bl_description = (
+        "Link the other selected objects into this soft body's collider "
+        "collection, creating one if it has none yet"
+    )
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -374,16 +416,27 @@ class MARROW_OT_collider_add(bpy.types.Operator):
         return obj is not None and obj.type == "MESH"
 
     def execute(self, context):
-        settings = context.active_object.marrow
-        settings.colliders.add()
-        settings.active_collider = len(settings.colliders) - 1
+        obj = context.active_object
+        picked = [ob for ob in context.selected_objects if ob is not obj]
+        if not picked:
+            self.report(
+                {"ERROR"},
+                "Marrow: select the objects to collide against as well as the body",
+            )
+            return {"CANCELLED"}
+
+        collection = _collection_for(obj)
+        for ob in picked:
+            if ob.name not in collection.objects:
+                collection.objects.link(ob)
+        obj.marrow.active_collider = max(0, len(collection.all_objects) - 1)
         return {"FINISHED"}
 
 
 class MARROW_OT_collider_remove(bpy.types.Operator):
     bl_idname = "marrow.collider_remove"
     bl_label = "Remove Collider"
-    bl_description = "Remove the selected collider slot"
+    bl_description = "Unlink the selected collider from the collection"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -392,12 +445,20 @@ class MARROW_OT_collider_remove(bpy.types.Operator):
         return (
             obj is not None
             and obj.type == "MESH"
-            and len(obj.marrow.colliders) > 0
+            and obj.marrow.collider_collection is not None
+            and len(obj.marrow.collider_collection.all_objects) > 0
         )
 
     def execute(self, context):
         settings = context.active_object.marrow
-        index = min(settings.active_collider, len(settings.colliders) - 1)
-        settings.colliders.remove(index)
+        collection = settings.collider_collection
+        members = list(collection.all_objects)
+        index = min(settings.active_collider, len(members) - 1)
+        target = members[index]
+        # all_objects reaches into nested collections, so unlink the object
+        # from whichever one actually holds it, not just the top level.
+        for holder in (collection, *collection.children_recursive):
+            if target.name in holder.objects:
+                holder.objects.unlink(target)
         settings.active_collider = max(0, index - 1)
         return {"FINISHED"}

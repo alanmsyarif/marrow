@@ -1,6 +1,6 @@
 """Marrow: GPU tetrahedral soft body for Blender."""
 
-__version__ = "0.7.1"
+__version__ = "0.8.1"
 
 # bpy is imported inside register()/unregister(), not at module scope. Any
 # `from .core.x import ...` executes this file first, so a top-level
@@ -23,10 +23,12 @@ def register():
         MARROW_OT_free,
         MARROW_OT_live,
         MARROW_OT_tetrahedralize,
+        migrate_collider_slots,
     )
     from .blender.ui import (
         MARROW_PT_panel,
         MARROW_UL_colliders,
+        MarrowColliderSettings,
         MarrowColliderSlot,
         MarrowSettings,
     )
@@ -34,6 +36,7 @@ def register():
     # MarrowColliderSlot must land before MarrowSettings, which points at it.
     classes = (
         MarrowColliderSlot,
+        MarrowColliderSettings,
         MarrowSettings,
         MARROW_UL_colliders,
         MARROW_OT_collider_add,
@@ -48,6 +51,14 @@ def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.marrow = bpy.props.PointerProperty(type=MarrowSettings)
+    bpy.types.Object.marrow_collider = bpy.props.PointerProperty(
+        type=MarrowColliderSettings
+    )
+    # Pre-collection .blend files still carry collider slots. Drain them the
+    # moment one is opened, so a body that plainly had colliders before does
+    # not come back with an empty collider list.
+    if migrate_collider_slots not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(migrate_collider_slots)
     _registered[:] = classes
 
 
@@ -61,6 +72,12 @@ def unregister():
     # context crashes at shutdown.
     handlers.unregister_handler()
 
+    from .blender.ops import migrate_collider_slots
+
+    while migrate_collider_slots in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(migrate_collider_slots)
+
+    del bpy.types.Object.marrow_collider
     del bpy.types.Object.marrow
     for cls in reversed(_registered):
         bpy.utils.unregister_class(cls)

@@ -4,7 +4,12 @@ import bpy
 
 
 class MarrowColliderSlot(bpy.types.PropertyGroup):
-    """One collider on a soft body: an object, and the shape to treat it as."""
+    """Legacy: one collider slot, from before colliders became a collection.
+
+    Kept registered only so a .blend saved by an older Marrow still has its
+    slots to read on load - see ``ops.migrate_collider_slots``, which drains
+    them into a collection and clears them. Nothing writes slots any more.
+    """
 
     object: bpy.props.PointerProperty(
         name="Object",
@@ -32,14 +37,41 @@ class MarrowColliderSlot(bpy.types.PropertyGroup):
     )
 
 
+class MarrowColliderSettings(bpy.types.PropertyGroup):
+    """How one object behaves when a body's collider collection holds it.
+
+    On the collider rather than on the body, so an object dropped into two
+    bodies' collections is described once instead of twice.
+    """
+
+    shape: bpy.props.EnumProperty(
+        name="Shape",
+        description="Collision shape, sized and oriented by the object's transform",
+        items=[
+            ("MESH", "Mesh", "The object's own shape, as a signed distance field"),
+            ("SPHERE", "Sphere", "Unit sphere shaped by the object transform"),
+            ("BOX", "Box", "Unit box shaped by the object transform"),
+        ],
+        default="MESH",
+    )
+    sticky: bpy.props.BoolProperty(
+        name="Sticky",
+        description=(
+            "Material that touches this collider is held to the surface and "
+            "dragged along as the collider moves, instead of only being "
+            "pushed out of it"
+        ),
+        default=False,
+    )
+
+
 class MARROW_UL_colliders(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_prop, index):
         row = layout.row(align=True)
-        row.prop(item, "object", text="", icon="OBJECT_DATA")
+        row.label(text=item.name, icon="OBJECT_DATA")
         sub = row.row(align=True)
-        sub.enabled = item.object is not None
-        sub.prop(item, "shape", text="")
-        sub.prop(item, "sticky", text="", icon="SNAP_ON", toggle=True)
+        sub.prop(item.marrow_collider, "shape", text="")
+        sub.prop(item.marrow_collider, "sticky", text="", icon="SNAP_ON", toggle=True)
 
 
 def _update_false_color(self, context):
@@ -107,26 +139,6 @@ class MarrowSettings(bpy.types.PropertyGroup):
         description="Stop the body falling through a horizontal plane",
         default=False,
     )
-    tearing_enabled: bpy.props.BoolProperty(
-        name="Tearing",
-        description=(
-            "Let over-stretched material fail permanently. Torn tets stop "
-            "resisting, so the body goes slack and pulls apart"
-        ),
-        default=False,
-    )
-    tear_threshold: bpy.props.FloatProperty(
-        name="Tear Strain",
-        description=(
-            "Largest stretch ratio material survives. 1.5 means a tet fails "
-            "once anything in it is pulled to 1.5x its rest length, in any "
-            "direction. Lower is more brittle. Volume-preserving squashing "
-            "stretches sideways and counts, so a heavy press can tear too"
-        ),
-        default=1.5,
-        min=1.01,
-        soft_max=5.0,
-    )
     self_collision: bpy.props.BoolProperty(
         name="Self Collision",
         description=(
@@ -157,6 +169,15 @@ class MarrowSettings(bpy.types.PropertyGroup):
         min=0.1,
         soft_max=3.0,
     )
+    collider_collection: bpy.props.PointerProperty(
+        name="Colliders",
+        description=(
+            "Every object in this collection is collided against, nested "
+            "collections included. Shape and Sticky are set on each object"
+        ),
+        type=bpy.types.Collection,
+    )
+    # Drained into collider_collection on load - see MarrowColliderSlot.
     colliders: bpy.props.CollectionProperty(type=MarrowColliderSlot)
     active_collider: bpy.props.IntProperty(default=0)
     stick_break: bpy.props.FloatProperty(
@@ -221,8 +242,14 @@ class MARROW_PT_panel(bpy.types.Panel):
 
         from .session import find_cage
 
-        if find_cage(obj) is not None:
-            cage.operator("marrow.detetrahedralize", icon="X")
+        if find_cage(obj) is None:
+            # Everything below acts on a cage. The sliders would feed a solver
+            # that does not exist and Live, Bake and Free can only report the
+            # same "run Tetrahedralize first" back, so offer none of it.
+            layout.label(text="Tetrahedralize to simulate", icon="INFO")
+            return
+
+        cage.operator("marrow.detetrahedralize", icon="X")
 
         sim = layout.box()
         sim.label(text="Simulation")
@@ -237,12 +264,6 @@ class MARROW_PT_panel(bpy.types.Panel):
         row.enabled = settings.ground_enabled
         row.prop(settings, "ground_z")
 
-        tearing = sim.box()
-        tearing.prop(settings, "tearing_enabled")
-        row = tearing.row()
-        row.enabled = settings.tearing_enabled
-        row.prop(settings, "tear_threshold")
-
         contact = sim.box()
         contact.prop(settings, "self_collision")
         contact.prop(settings, "body_collision")
@@ -250,24 +271,32 @@ class MARROW_PT_panel(bpy.types.Panel):
         row.enabled = settings.self_collision or settings.body_collision
         row.prop(settings, "self_thickness")
 
-        # Colliders belong to the body being simulated: pick them here rather
-        # than walking to each object and tagging it.
+        # Colliders belong to the body being simulated: point it at a
+        # collection here rather than walking to each object and tagging it.
         box = sim.box()
         box.label(text="Colliders", icon="PHYSICS")
+        box.prop(settings, "collider_collection", text="")
+        collection = settings.collider_collection
         row = box.row()
-        row.template_list(
-            "MARROW_UL_colliders", "",
-            settings, "colliders",
-            settings, "active_collider",
-            rows=2,
-        )
+        if collection is None:
+            row.label(
+                text="Select objects and press + to collide against them",
+                icon="INFO",
+            )
+        else:
+            row.template_list(
+                "MARROW_UL_colliders", "",
+                collection, "all_objects",
+                settings, "active_collider",
+                rows=2,
+            )
         col = row.column(align=True)
         col.operator("marrow.collider_add", icon="ADD", text="")
         col.operator("marrow.collider_remove", icon="REMOVE", text="")
-        if not settings.colliders:
-            box.label(text="Add an object to collide against", icon="INFO")
         row = box.row()
-        row.enabled = any(slot.sticky and slot.object for slot in settings.colliders)
+        row.enabled = collection is not None and any(
+            ob.marrow_collider.sticky for ob in collection.all_objects
+        )
         row.prop(settings, "stick_break")
 
         display = layout.box()

@@ -1,8 +1,9 @@
-"""Colliders are picked from the soft body, not tagged on each object.
+"""Colliders come from a collection on the soft body.
 
-Walking to every object to tick a checkbox was backwards: colliders belong to
-the body being simulated. The soft body owns a list of slots, each holding an
-object and the shape to treat it as.
+The body points at one Blender collection and every object in it is a
+collider, nested collections included. Shape and stickiness live on the
+collider object itself, so the same object can serve several bodies without
+its settings being duplicated per body.
 """
 
 import bpy
@@ -10,7 +11,7 @@ import numpy as np
 
 import marrow
 from marrow.blender import handlers
-from marrow.blender.ops import collider_objects_of
+from marrow.blender.ops import collider_objects_of, migrate_collider_slots
 from marrow.blender.session import MarrowSession
 from marrow.blender.ui import MARROW_PT_panel
 
@@ -32,26 +33,45 @@ def _soft_body(location=(0, 0, 3)):
     return obj
 
 
-def test_a_body_starts_with_no_colliders():
+def _ball(location=(0, 0, 0)):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=location)
+    return bpy.context.active_object
+
+
+def test_a_body_starts_with_no_collider_collection():
     _fresh()
     obj = _soft_body()
-    assert len(obj.marrow.colliders) == 0
+    assert obj.marrow.collider_collection is None
     assert collider_objects_of(obj) == []
 
 
-def test_add_and_remove_collider_slots():
+def test_collider_add_links_the_selected_objects():
     _fresh()
     obj = _soft_body()
-    assert bpy.ops.marrow.collider_add() == {"FINISHED"}
-    assert bpy.ops.marrow.collider_add() == {"FINISHED"}
-    assert len(obj.marrow.colliders) == 2
-    assert obj.marrow.active_collider == 1
+    ball = _ball()
 
+    bpy.context.view_layer.objects.active = obj
+    assert bpy.ops.marrow.collider_add() == {"FINISHED"}
+
+    collection = obj.marrow.collider_collection
+    assert collection is not None, "add must create a collection to hold them"
+    assert ball.name in collection.objects, "the selected object was not linked"
+    assert obj.name not in collection.objects, "the body must not collide with itself"
+
+
+def test_collider_remove_unlinks_the_active_row():
+    _fresh()
+    obj = _soft_body()
+    ball = _ball()
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.marrow.collider_add()
+
+    obj.marrow.active_collider = 0
     assert bpy.ops.marrow.collider_remove() == {"FINISHED"}
-    assert len(obj.marrow.colliders) == 1
+    assert ball.name not in obj.marrow.collider_collection.objects
 
 
-def test_remove_is_unavailable_with_an_empty_list():
+def test_remove_is_unavailable_with_no_collection():
     _fresh()
     _soft_body()
     from marrow.blender.ops import MARROW_OT_collider_remove
@@ -59,16 +79,14 @@ def test_remove_is_unavailable_with_an_empty_list():
     assert MARROW_OT_collider_remove.poll(bpy.context) is False
 
 
-def test_picking_an_object_into_a_slot_reaches_the_solver():
+def test_a_collider_in_the_collection_reaches_the_solver():
     _fresh()
     obj = _soft_body()
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 0))
-    ball = bpy.context.active_object
+    ball = _ball()
+    ball.marrow_collider.shape = "SPHERE"
 
     bpy.context.view_layer.objects.active = obj
     bpy.ops.marrow.collider_add()
-    obj.marrow.colliders[0].object = ball
-    obj.marrow.colliders[0].shape = "SPHERE"
 
     assert collider_objects_of(obj) == [(ball, "SPHERE", False)]
     session = MarrowSession(obj)
@@ -76,7 +94,7 @@ def test_picking_an_object_into_a_slot_reaches_the_solver():
     session._build_solver()
     assert len(session.solver.colliders) == 1
     kind, _to_local, _to_world, sticky, _field = session.solver.colliders[0]
-    assert sticky is False, "a collider is not sticky until the slot says so"
+    assert sticky is False, "a collider is not sticky until the object says so"
     assert kind == 1, "SPHERE must reach the kernel as kind 1"
 
 
@@ -86,41 +104,77 @@ def test_an_empty_works_as_a_collider():
     obj = _soft_body()
     bpy.ops.object.empty_add(location=(0, 0, 0))
     empty = bpy.context.active_object
+    empty.marrow_collider.shape = "BOX"
 
     bpy.context.view_layer.objects.active = obj
     bpy.ops.marrow.collider_add()
-    obj.marrow.colliders[0].object = empty
-    obj.marrow.colliders[0].shape = "BOX"
     assert collider_objects_of(obj) == [(empty, "BOX", False)]
 
 
-def test_an_empty_slot_is_skipped_not_an_error():
+def test_an_empty_collection_is_skipped_not_an_error():
     _fresh()
     obj = _soft_body()
-    bpy.ops.marrow.collider_add()          # left unset
+    obj.marrow.collider_collection = bpy.data.collections.new("Empty Colliders")
+
     assert collider_objects_of(obj) == []
     session = MarrowSession(obj)
     session.refresh_from_object()
     session._build_solver()                 # must not raise
 
 
-def test_a_body_pointed_at_itself_is_skipped():
+def test_a_body_inside_its_own_collider_collection_is_skipped():
     _fresh()
     obj = _soft_body()
-    bpy.ops.marrow.collider_add()
-    obj.marrow.colliders[0].object = obj
+    collection = bpy.data.collections.new("Colliders")
+    collection.objects.link(obj)
+    obj.marrow.collider_collection = collection
+
     assert collider_objects_of(obj) == [], "a body must not collide with itself"
 
 
-def test_a_picked_collider_actually_stops_the_body():
+def test_a_nested_collection_counts_as_colliders():
+    _fresh()
+    obj = _soft_body()
+    ball = _ball()
+    inner = bpy.data.collections.new("Inner")
+    inner.objects.link(ball)
+    outer = bpy.data.collections.new("Outer")
+    outer.children.link(inner)
+    obj.marrow.collider_collection = outer
+
+    assert collider_objects_of(obj) == [(ball, "MESH", False)], (
+        "objects in a nested collection must collide too"
+    )
+
+
+def test_old_collider_slots_migrate_to_a_collection():
+    """A .blend saved before the collection rewrite keeps its colliders."""
+    _fresh()
+    obj = _soft_body()
+    ball = _ball()
+
+    slot = obj.marrow.colliders.add()
+    slot.object = ball
+    slot.shape = "SPHERE"
+    slot.sticky = True
+
+    migrate_collider_slots()
+
+    assert len(obj.marrow.colliders) == 0, "migrated slots must be cleared"
+    assert obj.marrow.collider_collection is not None
+    assert ball.name in obj.marrow.collider_collection.objects
+    assert ball.marrow_collider.shape == "SPHERE"
+    assert ball.marrow_collider.sticky is True
+    assert collider_objects_of(obj) == [(ball, "SPHERE", True)]
+
+
+def test_a_collider_actually_stops_the_body():
     _fresh()
     obj = _soft_body(location=(0, 0, 3))
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0, 0, 0))
-    ball = bpy.context.active_object
+    _ball()
 
     bpy.context.view_layer.objects.active = obj
     bpy.ops.marrow.collider_add()
-    obj.marrow.colliders[0].object = ball
 
     scene = bpy.context.scene
     scene.frame_start, scene.frame_end = 1, 40

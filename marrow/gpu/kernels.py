@@ -104,46 +104,10 @@ void project(ivec4 idx, vec3 g0, vec3 g1, vec3 g2, vec3 g3,
   imageStore(p, texel(idx.w), vec4(n3.xyz + g3 * (n3.w * dlambda), n3.w));
 }
 
-// Largest principal stretch: the biggest singular value of F, which is the
-// square root of the largest eigenvalue of F^T F.
-//
-// This is the honest answer to "how far is this stretched", and the tear
-// threshold is quoted as a stretch ratio, so this is what it has to measure.
-// ||F||_F was the old test and it conflates all three directions at once: it
-// reads sqrt(3) at rest, so a 1.5 threshold sounds like 50% but a real
-// volume-preserving uniaxial pull did not fail until 143%.
-//
-// Closed form for a symmetric 3x3 rather than an iterative SVD - one acos
-// beats a loop whose iteration count can differ between drivers.
-float max_principal_stretch(mat3 f)
-{
-  mat3 a = transpose(f) * f;
-  float p1 = a[1][0] * a[1][0] + a[2][0] * a[2][0] + a[2][1] * a[2][1];
-  float q = (a[0][0] + a[1][1] + a[2][2]) / 3.0;
-  if (p1 <= 1e-20) {                       // already diagonal
-    return sqrt(max(max(a[0][0], a[1][1]), a[2][2]));
-  }
-  float d0 = a[0][0] - q;
-  float d1 = a[1][1] - q;
-  float d2 = a[2][2] - q;
-  float p = sqrt((d0 * d0 + d1 * d1 + d2 * d2 + 2.0 * p1) / 6.0);
-  mat3 b = (a - q * mat3(1.0)) / p;
-  float r = clamp(determinant(b) * 0.5, -1.0, 1.0);
-  // The largest of the three roots. F^T F is positive semi-definite so this
-  // cannot really be negative, but rounding can push it a hair under zero.
-  float eig = q + 2.0 * p * cos(acos(r) / 3.0);
-  return sqrt(max(eig, 0.0));
-}
-
 void main()
 {
   int t = color_begin + int(gl_GlobalInvocationID.x);
   if (t >= color_end) { return; }
-
-  // The torn image carries more than a flag: for a torn tet it holds the
-  // volume ratio the tet had at the instant it broke. Zero means intact.
-  float torn_vol = imageLoad(torn, texel(t)).r;
-  bool is_torn = torn_vol > 0.0;
 
   ivec4 idx = ivec4(imageLoad(tets, texel(t)));
 
@@ -164,47 +128,8 @@ void main()
   vec3 p0 = imageLoad(p, texel(idx.x)).xyz;
   mat3 f = shape_matrix(idx, p0) * dm_inv;
 
-  // Checked before either projection and independently of mu, so a body with
-  // no deviatoric stiffness can still tear. tear_threshold reads directly as a
-  // stretch ratio now: 1.5 means "fails once something is pulled to 1.5x its
-  // rest length". Zero or less disables tearing, which is what the
-  // oracle-parity tests run with.
-  if (!is_torn && tear_threshold > 0.0
-      && max_principal_stretch(f) > tear_threshold) {
-    float l0 = imageLoad(live, texel(idx.x)).r;
-    float l1 = imageLoad(live, texel(idx.y)).r;
-    float l2 = imageLoad(live, texel(idx.z)).r;
-    float l3 = imageLoad(live, texel(idx.w)).r;
-
-    // Never tear the last intact tet holding a node. A node with no intact tet
-    // has no constraint of any kind left: it free-falls, and since the render
-    // mesh topology is fixed it drags a spike behind it rather than becoming
-    // separate debris. Measured on a stretch shot that tore 1174 of 1400 tets:
-    // 324 of 461 nodes orphaned and material streaming 34 units past the
-    // plate. With this rule, none, and the shot still shreds.
-    //
-    // Safe without atomics for the same reason the projections are: a colour's
-    // tets are node-disjoint, so no two threads in this dispatch share a
-    // counter.
-    if (l0 > 1.5 && l1 > 1.5 && l2 > 1.5 && l3 > 1.5) {
-      // Record the volume ratio it broke at, not a bare flag. The hydrostatic
-      // pass below holds a torn tet there: it may not inflate, and it may not
-      // suck itself back to rest volume either. The floor keeps the value
-      // positive so it still reads as "torn", even for a tet caught inverted.
-      torn_vol = clamp(determinant(f), 0.05, 20.0);
-      imageStore(torn, texel(t), vec4(torn_vol));
-      imageStore(live, texel(idx.x), vec4(l0 - 1.0));
-      imageStore(live, texel(idx.y), vec4(l1 - 1.0));
-      imageStore(live, texel(idx.z), vec4(l2 - 1.0));
-      imageStore(live, texel(idx.w), vec4(l3 - 1.0));
-      is_torn = true;
-    }
-  }
-
   // --- deviatoric ---
-  // A torn tet stops resisting distortion, for good. That is what tearing
-  // means here: the material goes slack instead of springing back.
-  if (mu > 0.0 && !is_torn) {
+  if (mu > 0.0) {
     float c_dev = sqrt(dot(f[0], f[0]) + dot(f[1], f[1]) + dot(f[2], f[2]));
     if (c_dev > 1e-12) {
       mat3 dcdf = f / c_dev;
@@ -218,15 +143,6 @@ void main()
   }
 
   // --- hydrostatic ---
-  // Kept even when torn. Breaking material does not create matter, and a torn
-  // tet with no volume constraint at all inflates without bound - measured 3.1x
-  // cage volume on a stretch test that tore a sixth of its tets.
-  //
-  // A torn tet targets the volume it broke at rather than its rest volume.
-  // Aiming at rest volume instead would have torn material actively suck
-  // itself back in, which is a spring, and a torn tet is meant to have no
-  // spring left in it.
-  //
   // F is rebuilt from the positions the deviatoric pass just moved. Reusing the
   // stale F would linearise the volume constraint about the wrong
   // configuration. The oracle does the same.
@@ -241,10 +157,8 @@ void main()
     vec3 g3v = g[2];
     vec3 g0v = -(g1v + g2v + g3v);
 
-    // gamma exists only to cancel the deviatoric term at rest. A torn tet has
-    // no deviatoric term left, so leaving it at 1 + mu/lam would have torn
-    // material creep 10% larger every substep and never stop.
-    float gamma = is_torn ? torn_vol : (1.0 + mu / lam);
+    // gamma exists only to cancel the deviatoric term at rest.
+    float gamma = 1.0 + mu / lam;
     float c_hyd = determinant(hf) - gamma;
     project(idx, g0v, g1v, g2v, g3v, c_hyd, 1.0 / (lam * rest_vol), h);
   }

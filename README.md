@@ -24,7 +24,7 @@ blender --command extension build --source-dir marrow --output-dir dist
 
 1. Select a mesh. Open the **Marrow** tab in the 3D viewport sidebar (`N`).
 2. Set **Resolution** and press **Tetrahedralize**. A hidden wire cage is created and parented to your object.
-3. Optionally add something to collide against: under **Simulation > Colliders**, press **+** and pick an object. Toggle the magnet on that slot to make it [sticky](#sticky-colliders), so material it touches is dragged along with it rather than only pushed away.
+3. Optionally add something to collide against: select it, then the soft body, and under **Simulation > Colliders** press **+**. Toggle the magnet on its row to make it [sticky](#sticky-colliders), so material it touches is dragged along with it rather than only pushed away.
 4. Press play.
 
 That is the whole loop. **Live is on by default**: each frame is simulated as the timeline reaches it and cached, so scrubbing back is free and a second pass costs nothing.
@@ -63,17 +63,16 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
-| **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
 | **Self Collision** | Stop the body passing through itself where it folds. |
 | **Collide With Bodies** | Collide with other Marrow objects that also have it on. Both deform. |
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
-| **Colliders** | The list of objects this body collides against, and whether each one is sticky. |
+| **Colliders** | The collection of objects this body collides against. Shape and Sticky are set on each object. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 | **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
 
 ### Colliders
 
-Each slot picks an object and how to treat it. **Mesh** is the default and uses the object's actual shape, so anything works — a bowl, a hand, a floor with a lip. **Sphere** and **Box** are cheaper and exactly round or square, for when the shape really is one.
+Each collider carries its own **Shape**. **Mesh** is the default and uses the object's actual shape, so anything works — a bowl, a hand, a floor with a lip. **Sphere** and **Box** are cheaper and exactly round or square, for when the shape really is one.
 
 A mesh collider is baked once into a signed distance field, in the object's own local space. That means moving, rotating and scaling it costs nothing — the field rides the transform exactly as the primitives do. It also means concavity works properly: a node in the hole of a torus is correctly outside the solid, which a bounding box or a convex hull would get wrong.
 
@@ -82,36 +81,27 @@ The field's grid tracks your **Resolution**, since it only needs to resolve deta
 **A deforming collider is not re-baked.** Shape keys, an armature or Geometry Nodes on the collider are captured once when the simulation starts and never revisited. Transform animation is free; deformation is not.
 
 
-Colliders belong to the body being simulated, so you set them up without leaving it. In **Simulation > Colliders**, press **+**, pick an object in the slot, and choose **Sphere** or **Box**. Press **-** to remove the selected slot.
+Colliders come from a **collection**. The body points at one, and every object in it is a collider — nested collections included, so you can group them however the shot wants.
+
+The quickest way in: select the objects you want to collide against, then the soft body last so it is active, and press **+** in **Simulation > Colliders**. Marrow makes a `<body> Colliders` collection if there is none yet, and links them in. **-** unlinks the highlighted row. You can also just point the field at a collection you already have, and drag objects in and out of it in the outliner.
+
+Because the settings live on the collider and not on the body, an object dropped into two bodies' collections is described once. Change its Shape and both bodies follow.
 
 The shape is a unit primitive driven entirely by the picked object's transform, so a default Blender sphere or cube maps exactly, and position, rotation and scale all animate. An **Empty works just as well as a mesh**, and is often tidier: a primitive collider needs a transform and nothing else.
 
 Collider transforms are re-sampled every frame in both live and baked modes, so a falling ball genuinely lands on a jelly rather than sitting still.
 
-An empty slot, or a body pointed at itself, is skipped rather than treated as an error. Both are just a half-finished edit.
+An empty collection, or a body sitting in its own collider collection, is skipped rather than treated as an error. Both are just a half-finished edit.
 
 #### Sticky colliders
 
-The magnet toggle on a collider slot makes it **sticky**. Material that touches it is held to the surface and dragged along as the collider moves, instead of only being pushed out of it.
+The magnet toggle on a collider makes it **sticky**. Material that touches it is held to the surface and dragged along as the collider moves, instead of only being pushed out of it.
 
 Plain non-penetration can only push, so a collider that lifts away leaves the body behind. Sticky is what makes squash-and-stretch possible: press a plate into a blob, lift it, and the material is drawn up into a column. The contact point is recorded in the collider's own local space, so the anchor rides the animated transform for free and rotation and scale come along with it.
 
 **Stick Break** is how far the material may drag a contact point before it lets go, in world units. Zero never lets go. There is no universal value: the distance a contact settles at depends on Stiffness and Substeps, so tune it against the shot.
 
 > **Do not start a body already overlapping a sticky collider.** Every buried node is grabbed on the first frame and welded to whichever face happened to be nearest. They scatter across different faces and turn the body inside out. Measured on a sphere half-buried in a sticky box: 219 of 461 nodes seized immediately, 12% of tets inverted, render mesh shredded. Move the collider clear at the start frame, or leave Sticky off. A collider that presses in *during* the simulation is fine, and is the intended way to set a stretch shot up.
-
-### Tearing
-
-Tearing is **constraint failure**, not fracture. A tetrahedron past the strain threshold stops resisting distortion, permanently, so the material necks, stretches and pulls apart. It does **not** split into separate pieces with a visible gap: the render mesh is never modified, which is what keeps your UVs, shape keys and material slots intact.
-
-**Tear Strain is the largest principal stretch a tet survives**, so it reads the same in every direction: 1.5 means failure once anything is pulled to 1.5x its rest length, whether that is a pull along one axis, a uniform swell or a shear. Rotation is not strain and never tears.
-
-One consequence worth knowing: a volume-preserving squash stretches the material sideways, and that counts. Press a blob to a quarter of its height and it has stretched 2x laterally, which fails a 1.5 threshold. If a heavy press is tearing material you wanted intact, raise Tear Strain or switch Tearing off for that shot.
-
-Two things a torn tet still does:
-
-- **It keeps a volume constraint**, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1x on a stretch test.
-- **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
 ### Self collision
 
@@ -150,7 +140,7 @@ Cost is surface nodes of one body times surface nodes of the other, per pair, wi
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
 
-This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at 226 m/s, which is past any tear threshold and shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.
+This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at 226 m/s, which shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.
 
 ### False color
 
