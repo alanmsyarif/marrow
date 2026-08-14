@@ -157,6 +157,18 @@ def test_a_large_jump_leaves_the_mesh_alone():
         handlers.unregister_handler()
 
 
+def test_live_toggle_without_a_cage_names_the_fix():
+    obj = _cube()
+    bpy.ops.marrow.detetrahedralize()   # back to a plain mesh, live now off
+    try:
+        bpy.ops.marrow.live_toggle()
+    except RuntimeError as exc:
+        assert "Tetrahedralize" in str(exc), f"unhelpful error: {exc}"
+    else:
+        raise AssertionError("live without a cage must report an error")
+    assert not obj.marrow.live_enabled, "a refused toggle still flipped Live on"
+
+
 def test_turning_live_off_frees_the_session():
     obj = _cube()
     bpy.context.scene.frame_set(1)

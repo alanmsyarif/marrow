@@ -107,6 +107,15 @@ def test_it_reports_rather_than_raising_on_a_plain_mesh():
     assert bpy.ops.marrow.detetrahedralize() == {"CANCELLED"}
 
 
+def test_a_no_op_run_does_not_touch_live_or_sessions():
+    """Reporting 'nothing to remove' must not come with side effects."""
+    obj = _setup()
+    obj.marrow.live_enabled = True
+    assert bpy.ops.marrow.detetrahedralize() == {"CANCELLED"}
+    assert obj.marrow.live_enabled, "a no-op run flipped Live off"
+    assert obj.name not in handlers.SESSIONS
+
+
 def test_a_second_run_is_a_no_op():
     obj = _setup()
     bpy.ops.marrow.tetrahedralize()
