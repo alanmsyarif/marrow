@@ -16,7 +16,8 @@ IMAGES = [
     ("RGBA32F", "FLOAT_2D", "p", {"READ"}),
     ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"}),
 ]
-PUSH = [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes")]
+PUSH = [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
+        ("FLOAT", "max_vel")]
 
 
 def _run_integrate(state, predicted, h, damping):
@@ -34,6 +35,8 @@ def _run_integrate(state, predicted, h, damping):
     shader.uniform_float("h", h)
     shader.uniform_float("damping", damping)
     shader.uniform_int("n_nodes", n)
+    # The oracle has no velocity clamp; keep it disabled so the two agree.
+    shader.uniform_float("max_vel", 0.0)
     gpu.compute.dispatch(shader, (n + 63) // 64, 1, 1)
 
     sync = make_flush_shader("RGBA32F")

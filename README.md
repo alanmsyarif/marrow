@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.6.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-0.6.2.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -195,7 +195,7 @@ Core geometry and solver maths live in `marrow/core/` and never import `bpy`, wh
 blender -b --factory-startup --python tests/blender/run_tests.py
 ```
 
-**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 168 tests and they all pass on 5.2.
+**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 171 tests and they all pass on 5.2.
 
 Running a single module rather than `run_tests.py` needs a `gpu.init()` of your own first: 5.2 requires it, and several modules rely on some earlier module in the full run having already called it.
 
