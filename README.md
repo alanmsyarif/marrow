@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.9.2.zip
+blender --command extension install-file -r user_default --enable dist/marrow-0.9.3.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -162,11 +162,11 @@ Cost is surface nodes of one body times surface nodes of the other, per pair, wi
 
 **Attach Stiffness** is how hard the flesh follows. 1.0 rides the animation exactly; lower values let the bones lead and the flesh lag, jiggle and overshoot.
 
-While Attachment is on, the object's own modifiers are **muted in the display**, viewport and render. They feed the targets, and the written simulation is the display; leaving them shown would deform the result a second time - measured at exactly twice the bone travel. Toggling Attachment off or De-tetrahedralize hands the original visibility back. The targets come from Blender's evaluated mesh, so linear and dual quaternion skinning both work without Marrow reimplementing either.
+While Attachment is on, modifiers that keep the vertex count - Armature, Simple Deform and the like - are **muted in the display**, viewport and render. They feed the targets, and the written simulation is the display; leaving them shown would deform the result a second time - measured at exactly twice the bone travel. Modifiers that change the count - Subdivision, Decimate - are the opposite: their vertices have no per-base-vertex meaning, so they cannot feed the targets, and they stay shown to smooth the simulated shape. Toggling Attachment off or De-tetrahedralize hands the original visibility back. Toggling Attachment on or changing Attach Stiffness mid-simulation restarts the sim on the next frame instead of waiting for a trip to the start frame. The targets come from Blender's evaluated mesh, so linear and dual quaternion skinning both work without Marrow reimplementing either.
 
 Contacts keep the last word: the attachment pull runs before collision, so a ground plane or collider still stops a body the bone drags into it.
 
-Attachment needs the object to keep its vertex count - a modifier that adds or removes vertices breaks the weight table and is reported on the console. Weights are synthesized once against the rest shape; editing the mesh afterwards needs a re-tetrahedralize, same rule as the bind data.
+Attachment needs the object to keep its vertex count: the weight table is per base vertex, which is why count-changing modifiers are kept out of the targets and left on the display only. Weights are synthesized once against the rest shape, in object space, so moving or rotating the object afterwards cannot scramble them; like the rest of Marrow the simulation itself stays in the world frame it was tetrahedralized in. Tetrahedralize fills the cage from the modelled shape whichever frame it runs on - the capture parks the modifier stack, so a pose playing at tet time cannot wedge the posed silhouette between the lattice and the bind. Editing the mesh needs a re-tetrahedralize, same rule as the bind data.
 
 ### Ground plane
 
@@ -225,7 +225,7 @@ Core geometry and solver maths live in `marrow/core/` and never import `bpy`, wh
 blender -b --factory-startup --python tests/blender/run_tests.py
 ```
 
-**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 176 tests and they all pass on 5.2.
+**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 202 tests and they all pass on 5.2.
 
 Running a single module rather than `run_tests.py` needs a `gpu.init()` of your own first: 5.2 requires it, and several modules rely on some earlier module in the full run having already called it.
 

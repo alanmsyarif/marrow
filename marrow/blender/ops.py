@@ -44,34 +44,50 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
         # drift would compound every time Resolution was changed.
         restore_rest(obj.data)
 
-        mask, bounds_min = cell_mask_from_object(obj, spacing)
-        if not mask.any():
-            self.report(
-                {"ERROR"},
-                "No cells inside the mesh. Lower Resolution in the Marrow panel "
-                "until the cage fills the object.",
-            )
-            return {"CANCELLED"}
-
-        tetmesh = build_lattice(bounds_min, spacing, mask)
+        # The lattice, the bind and the stored rest must all describe the
+        # SAME shape: the modelled base mesh. The inside test evaluates the
+        # modifier stack, so with an armature playing a pose the cage would
+        # fill the POSED silhouette while the bind reads the unposed base
+        # mesh - two different frames, and the attachment weights synthesized
+        # between them collapse onto a handful of vertices. Park every
+        # modifier for the capture; sampling applies the same rule per frame.
+        states = [(m, m.show_viewport) for m in obj.modifiers]
+        for m, _ in states:
+            m.show_viewport = False
         try:
-            tetmesh.validate()
-        except ValueError as exc:
-            self.report({"ERROR"}, f"Invalid cage: {exc}")
-            return {"CANCELLED"}
+            bpy.context.view_layer.update()
+            mask, bounds_min = cell_mask_from_object(obj, spacing)
+            if not mask.any():
+                self.report(
+                    {"ERROR"},
+                    "No cells inside the mesh. Lower Resolution in the Marrow panel "
+                    "until the cage fills the object.",
+                )
+                return {"CANCELLED"}
 
-        colors = color_tets(tetmesh.tets, tetmesh.n_nodes)
+            tetmesh = build_lattice(bounds_min, spacing, mask)
+            try:
+                tetmesh.validate()
+            except ValueError as exc:
+                self.report({"ERROR"}, f"Invalid cage: {exc}")
+                return {"CANCELLED"}
 
-        render_verts = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
-        obj.data.vertices.foreach_get("co", render_verts)
-        render_verts = render_verts.reshape(-1, 3)
-        world = np.array(obj.matrix_world.to_4x4())
-        world_verts = render_verts @ world[:3, :3].T + world[:3, 3]
+            colors = color_tets(tetmesh.tets, tetmesh.n_nodes)
 
-        bind_idx, bind_w = bind_points(tetmesh.nodes, tetmesh.tets, world_verts)
-        write_bind(obj.data, bind_idx, bind_w)
-        # Captured after the restore above, so it is the modelled shape.
-        write_rest(obj.data)
+            render_verts = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
+            obj.data.vertices.foreach_get("co", render_verts)
+            render_verts = render_verts.reshape(-1, 3)
+            world = np.array(obj.matrix_world.to_4x4())
+            world_verts = render_verts @ world[:3, :3].T + world[:3, 3]
+
+            bind_idx, bind_w = bind_points(tetmesh.nodes, tetmesh.tets, world_verts)
+            write_bind(obj.data, bind_idx, bind_w)
+            # Captured after the restore above, so it is the modelled shape.
+            write_rest(obj.data)
+        finally:
+            for m, state in states:
+                m.show_viewport = state
+            bpy.context.view_layer.update()
 
         cage_name = f"{obj.name}{CAGE_SUFFIX}"
         remove_cage(obj)

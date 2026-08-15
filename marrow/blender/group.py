@@ -14,6 +14,8 @@ would make a three-body pile settle differently depending on which mesh the
 frame handler happened to reach first.
 """
 
+import bpy
+
 _warned: set = set()
 
 
@@ -121,6 +123,20 @@ def advance(session, frame: int, frame_start: int):
         return session._cache.get(frame)
 
     members = members_of(session)
+
+    # Flipping Attachment or its stiffness must rebuild on the next frame
+    # change, not wait for a manual trip to the start frame: the mute hides
+    # the driving modifiers the instant the box is ticked, so a body that is
+    # muted but not yet bone-driven reads as broken.
+    for m in members:
+        obj = bpy.data.objects.get(m.object_name)
+        settings = getattr(obj, "marrow", None) if obj is not None else None
+        if settings is not None and (
+            bool(settings.attach_enabled) != m.attach_enabled
+            or float(settings.attach_stiffness) != m.attach_stiffness
+        ):
+            _restart(members, frame_start)
+            break
 
     if frame < frame_start:
         # There is no frame to serve down here, and leaving the last

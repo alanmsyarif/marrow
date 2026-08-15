@@ -224,6 +224,110 @@ def test_toggling_attach_off_hands_the_modifiers_back():
     assert DISPLAY_KEY not in obj
 
 
+def test_a_count_changing_modifier_is_display_only():
+    """Subdivision cannot feed the targets - its vertices have no
+    per-base-vertex meaning - so it stays shown and smooths the display,
+    while the armature modifier is muted and drives the simulation. A
+    body under a Subdivision must bake without the vertex-count error
+    and still ride the bone."""
+    obj = _skinned_body(shift=(2.0, 0.0, 0.0))
+    sub = obj.modifiers.new("Subdivision", "SUBSURF")
+    sub.levels = 1
+    obj.marrow.attach_enabled = True
+    obj.marrow.attach_stiffness = 1.0
+    bpy.ops.marrow.tetrahedralize()
+    session = _bake(obj)
+    try:
+        armature = obj.modifiers["Armature"]
+        assert armature.show_viewport is False, (
+            "the driving modifier must stay muted under attachment"
+        )
+        assert sub.show_viewport is True, (
+            "a count-changing modifier must be handed back to the display"
+        )
+        rows = obj[DISPLAY_KEY]
+        assert len(rows["Subdivision"]) == 3 and not rows["Subdivision"][2], (
+            f"the probe must record Subdivision as count-changing: {rows}"
+        )
+        first = _centroid(session.frame_positions(FRAMES[0]))
+        last = _centroid(session.frame_positions(FRAMES[1]))
+        assert abs((last - first)[0] - 2.0) < 1e-2, (
+            "the body must still ride the bone under a Subdivision modifier"
+        )
+        # The display is the smoothed simulation: evaluated mesh is denser.
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = obj.evaluated_get(depsgraph)
+        me = evaluated.to_mesh()
+        try:
+            assert len(me.vertices) > len(obj.data.vertices), (
+                "Subdivision must still smooth the displayed mesh"
+            )
+        finally:
+            evaluated.to_mesh_clear()
+    finally:
+        handlers.unregister_handler()
+
+
+def test_attachment_survives_moving_the_object_after_tetrahedralize():
+    """Weights are synthesized in object space and targets are sampled into
+    the bind frame, so relocating the body after Tetrahedralize must not
+    scramble the blend into a featureless blob. The simulation, like the
+    rest of Marrow, simply stays in the world frame it started in."""
+    obj = _skinned_body(shift=(2.0, 0.0, 0.0))
+    obj.marrow.attach_enabled = True
+    obj.marrow.attach_stiffness = 1.0
+    bpy.ops.marrow.tetrahedralize()
+    obj.location = (3.0, 0.0, 0.0)
+    bpy.context.view_layer.update()
+    session = _bake(obj)
+    try:
+        first = session.frame_positions(FRAMES[0])
+        last = session.frame_positions(FRAMES[1])
+        spread = last.max(axis=0) - last.min(axis=0)
+        assert np.all(spread > 1.5) and np.all(spread < 2.5), (
+            f"moving the object after Tetrahedralize scrambled the body "
+            f"into a blob: spread {spread}"
+        )
+        delta = _centroid(last) - _centroid(first)
+        assert abs(delta[0] - 2.0) < 1e-2, (
+            f"body tracked the bone {delta[0]:+.3f} m, expected 2.0"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
+def test_tetrahedralizing_at_a_posed_frame_still_binds_the_rest_shape():
+    """The lattice fill evaluates the modifier stack, but the bind and the
+    stored rest read the unposed base mesh. Tetrahedralizing while the bone
+    plays a pose must therefore park the modifiers for the capture - else
+    the cage fills the posed silhouette, the weights collapse onto a handful
+    of vertices, and every target becomes a blob. With the capture parked,
+    a body tetrahedralized mid-pose still rides the bone at full spread."""
+    obj = _skinned_body(shift=(2.0, 0.0, 0.0))
+    obj.marrow.attach_enabled = True
+    obj.marrow.attach_stiffness = 1.0
+    bpy.context.scene.frame_set(FRAMES[1])  # tet into the pose, not the rest
+    bpy.ops.marrow.tetrahedralize()
+    assert obj.modifiers[0].show_viewport is False, (
+        "attachment on must keep the modifier muted across the capture"
+    )
+    session = _bake(obj)
+    try:
+        first = _centroid(session.frame_positions(FRAMES[0]))
+        last = _centroid(session.frame_positions(FRAMES[1]))
+        delta = last - first
+        assert abs(delta[0] - 2.0) < 1e-2, (
+            f"body tracked the bone {delta[0]:+.3f} m, expected 2.0"
+        )
+        spread = session.frame_positions(FRAMES[1])
+        spread = spread.max(axis=0) - spread.min(axis=0)
+        assert np.all(spread > 1.5) and np.all(spread < 2.5), (
+            f"posed-frame tetrahedralize scrambled the body: spread {spread}"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
 def test_attach_off_leaves_the_classic_trajectory_alone():
     """Zero-cost guard: with the toggle off there is no shader, no cached
     weights, and the bake is bit-identical to the previous bake."""

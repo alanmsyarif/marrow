@@ -245,6 +245,41 @@ def test_a_large_jump_with_an_empty_cache_catches_up_from_the_start():
         handlers.unregister_handler()
 
 
+def test_flipping_attachment_mid_sim_restarts_the_group():
+    """The toggle mutes the driving modifiers the instant the box is
+    ticked, so a body that is muted but not yet bone-driven reads as
+    broken. Flipping Attachment (or its stiffness) must therefore rebuild
+    on the next frame change, not wait for a manual trip to the start
+    frame. With k=1 and no bones the targets are the rest shape, so a
+    restarted body snaps back up to it instead of falling on."""
+    obj = _cube()
+    rest_z = _positions(obj)[:, 2].mean()
+    scene = bpy.context.scene
+    try:
+        for frame in range(1, 7):
+            scene.frame_set(frame)
+        session = handlers.SESSIONS[obj.name]
+        assert session.attach_enabled is False
+        falling_z = _positions(obj)[:, 2].mean()
+        assert falling_z < rest_z - 0.05, "setup: the body should be falling"
+
+        obj.marrow.attach_enabled = True
+        obj.marrow.attach_stiffness = 1.0
+        scene.frame_set(7)
+
+        session = handlers.SESSIONS[obj.name]
+        assert session.attach_enabled is True, (
+            "the flip must be picked up without returning to the start frame"
+        )
+        held_z = _positions(obj)[:, 2].mean()
+        assert held_z > falling_z, (
+            f"the restart must re-attach the body (z {held_z:.3f}, was "
+            f"falling at {falling_z:.3f})"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
 def test_live_toggle_without_a_cage_names_the_fix():
     obj = _cube()
     bpy.ops.marrow.detetrahedralize()   # back to a plain mesh, live now off

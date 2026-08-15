@@ -15,10 +15,24 @@ BIND_IDX = "marrow_bind_idx"
 BIND_W = ("marrow_bind_w0", "marrow_bind_w1", "marrow_bind_w2", "marrow_bind_w3")
 REST_KEY = "marrow_rest"
 # Cage-node attachment weights, stored on the CAGE mesh: k nearest render
-# vertex indices and their weights per node.
-ATTACH_IDX = "marrow_attach_idx"
+# vertex indices and their weights per node. The "2" generation was
+# synthesized in object space; generation 1 measured world-space vertices
+# against bind-space nodes, so any object transform change after
+# Tetrahedralize scrambled the correspondence. Old caches must be ignored,
+# hence the new names.
+ATTACH_IDX = "marrow_attach_idx2"
 ATTACH_K = 4
-ATTACH_W = tuple(f"marrow_attach_w{i}" for i in range(ATTACH_K))
+ATTACH_W = tuple(f"marrow_attach_w2_{i}" for i in range(ATTACH_K))
+_LEGACY_ATTACH = (
+    "marrow_attach_idx",
+    "marrow_attach_idx_1",
+    "marrow_attach_idx_2",
+    "marrow_attach_idx_3",
+    "marrow_attach_w0",
+    "marrow_attach_w1",
+    "marrow_attach_w2",
+    "marrow_attach_w3",
+)
 
 
 def _attach_idx_names():
@@ -112,7 +126,13 @@ def restore_rest(mesh) -> bool:
 
 def clear_marrow_data(mesh) -> None:
     """Remove every attribute Marrow wrote. Tolerates any being absent."""
-    for name in (REST_KEY, BIND_IDX) + BIND_W + _attach_idx_names() + ATTACH_W:
+    for name in (
+        (REST_KEY, BIND_IDX)
+        + BIND_W
+        + _attach_idx_names()
+        + ATTACH_W
+        + _LEGACY_ATTACH
+    ):
         attr = mesh.attributes.get(name)
         if attr is not None:
             mesh.attributes.remove(attr)

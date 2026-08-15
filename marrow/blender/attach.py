@@ -15,22 +15,61 @@ from ..core.attach import synth_weights, targets_from
 
 # Where the modifiers' pre-mute visibility is stored on the object, so
 # toggling Attachment off or De-tetrahedralize can hand the display back.
+# Rows are name -> [show_viewport, show_render, preserves_count].
 DISPLAY_KEY = "marrow_attach_mod_display"
 
 
+def _preserves_count(obj, modifier) -> bool:
+    """Whether one modifier keeps the vertex count, probed by evaluating it
+    alone against the mesh as it is. Count behaviour depends on the modifier
+    and the topology, not on the positions, so the current mesh is fine.
+    """
+    import bpy
+
+    mesh = obj.data
+    states = [(m, m.show_viewport) for m in obj.modifiers]
+    for m, _ in states:
+        # Name match, not `is`: collection iteration hands out fresh RNA
+        # wrappers, so an identity check never matches and everything
+        # would end up muted.
+        m.show_viewport = m.name == modifier.name
+    try:
+        # view_layer.update(), not mesh.update(): a flag flip alone is not
+        # always enough for the depsgraph to re-evaluate the stack.
+        bpy.context.view_layer.update()
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = obj.evaluated_get(depsgraph)
+        me = evaluated.to_mesh()
+        count = 0 if me is None else len(me.vertices)
+        evaluated.to_mesh_clear()
+        return count == len(mesh.vertices)
+    finally:
+        for m, state in states:
+            m.show_viewport = state
+        bpy.context.view_layer.update()
+
+
 def mute_modifiers(obj, muted: bool) -> None:
-    """While attachment is on, the object's own modifiers feed the
+    """While attachment is on, count-preserving modifiers feed the
     simulation instead of bending its display.
 
-    The targets sample the evaluated mesh the modifiers produce, and the
-    written simulation IS the display - leaving the modifiers shown would
-    deform the result a second time, measured at exactly twice the bone
-    travel. The original visibility is stored on the object so it can be
-    handed back; modifiers added while muted are left alone both ways.
+    The targets sample the evaluated mesh they produce, and the written
+    simulation IS the display - leaving them shown would deform the result
+    a second time, measured at exactly twice the bone travel. Count-changing
+    modifiers (Subdivision, Decimate) are left alone instead: their vertices
+    have no per-base-vertex meaning, so they cannot feed the targets, and on
+    the display they smooth the simulated shape rather than re-bending it.
+
+    The original visibility is stored on the object so it can be handed
+    back; modifiers added while muted are adopted at sample time.
     """
     if muted:
         if DISPLAY_KEY not in obj:
-            # ID properties take dicts of plain arrays, not lists of lists.
+            # Two-element rows are unprobed: probing needs a depsgraph that
+            # actually re-evaluates, and the property update callback this
+            # runs from does not have one. Everything is muted for now; the
+            # first sample_targets probes and wakes the count-changing
+            # modifiers back up.
             obj[DISPLAY_KEY] = {
                 m.name: [bool(m.show_viewport), bool(m.show_render)]
                 for m in obj.modifiers
@@ -53,10 +92,12 @@ def mute_modifiers(obj, muted: bool) -> None:
 def ensure_weights(obj, tetmesh):
     """``(idx, w)`` for ``obj``'s cage, computing and caching them if new.
 
-    Weights are against the REST shape in world space: cage nodes are
-    stored world-space, and so must be the vertices they are measured to.
-    Computed lazily when attachment is first enabled rather than at
-    tetrahedralize time, so a body that never attaches pays nothing.
+    Weights are against the REST shape, synthesized in OBJECT space: the
+    cage nodes arrive in bind-time world space, and the bind matrix - kept
+    on the cage as matrix_parent_inverse - brings them home. Object space
+    never changes with the object transform, so moving or rotating the body
+    after Tetrahedralize cannot scramble the node-vertex correspondence the
+    way a world-space synthesis would.
 
     KNOWN LIMITATION: computed once and reused. Bone transform motion is
     captured every frame through the evaluated positions, but an edit
@@ -79,9 +120,9 @@ def ensure_weights(obj, tetmesh):
         raise ValueError(
             f"{obj.name!r} has no stored rest shape; re-run Tetrahedralize."
         )
-    world = np.array(obj.matrix_world.to_4x4())
-    world_rest = rest @ world[:3, :3].T + world[:3, 3]
-    idx, w = synth_weights(tetmesh.nodes, world_rest)
+    to_local = np.array(cage.matrix_parent_inverse.to_4x4())
+    nodes_local = tetmesh.nodes @ to_local[:3, :3].T + to_local[:3, 3]
+    idx, w = synth_weights(nodes_local, rest)
     write_attach(cage.data, idx, w)
     return idx, w
 
@@ -109,15 +150,56 @@ def sample_targets(obj, idx, w):
     current = np.empty(count * 3, dtype=np.float64)
     mesh.vertices.foreach_get("co", current)
 
-    # The modifiers are muted in the display while attachment is on, but
-    # sampling is exactly the one evaluation that needs them on.
-    swapped = []
     stored = obj.get(DISPLAY_KEY)
-    if stored is not None:
+
+    # Unprobed rows (stored by the toggle, which cannot probe) are sorted
+    # out here, where the depsgraph works: count-changing modifiers wake
+    # back up, because they only smooth the display - their vertices have
+    # no per-base-vertex meaning, so they cannot feed the targets.
+    if stored is not None and any(len(row) < 3 for row in stored.values()):
+        rows = {}
         for m in obj.modifiers:
-            if m.name in stored and not m.show_viewport:
-                m.show_viewport = True
-                swapped.append(m)
+            row = stored.get(m.name)
+            if row is None:
+                continue
+            if len(row) < 3:
+                preserves = _preserves_count(obj, m)
+                row = [bool(row[0]), bool(row[1]), preserves]
+                if not preserves:
+                    m.show_viewport = row[0]
+                    m.show_render = row[1]
+            rows[m.name] = [bool(row[0]), bool(row[1]), bool(row[2])]
+        obj[DISPLAY_KEY] = rows
+        stored = obj[DISPLAY_KEY]
+
+    # Count-preserving modifiers are muted in the display while attachment
+    # is on, but sampling is exactly the evaluation that needs them on.
+    # Count-changing ones are the opposite: on for display, off here, since
+    # targets are weighted per base vertex. Modifiers added after the mute
+    # are probed once and sorted the same way.
+    swapped, parked, adopted = [], [], []
+    for m in obj.modifiers:
+        row = stored.get(m.name) if stored is not None else None
+        if row is None and not m.show_viewport:
+            continue  # the user's own disabled modifier stays out of it
+        preserves = bool(row[2]) if row is not None else _preserves_count(obj, m)
+        if row is None and preserves:
+            # Adopted into the mute: it would re-bend the display.
+            adopted.append((m, bool(m.show_render)))
+            m.show_viewport = False
+            m.show_render = False
+            row = [True, True, True]
+        if preserves and not m.show_viewport:
+            m.show_viewport = True
+            swapped.append(m)
+        elif not preserves and m.show_viewport:
+            m.show_viewport = False
+            parked.append(m)
+    if adopted:
+        rows = {name: list(row) for name, row in (stored or {}).items()}
+        for m, render in adopted:
+            rows[m.name] = [True, render, True]
+        obj[DISPLAY_KEY] = rows
 
     # Restore only after the evaluated mesh has been read; an exception in
     # between must not strand the object at its rest shape.
@@ -138,15 +220,32 @@ def sample_targets(obj, idx, w):
                 )
             verts = np.empty(count * 3, dtype=np.float64)
             eval_mesh.vertices.foreach_get("co", verts)
-            world = np.array(evaluated.matrix_world.to_4x4())
         finally:
             evaluated.to_mesh_clear()
         verts = verts.reshape(-1, 3)
-        world_verts = verts @ world[:3, :3].T + world[:3, 3]
-        targets = targets_from(idx, w, world_verts)
+        # Targets live in the solver's frame - the world frame at
+        # tetrahedralize time, kept on the cage as the inverse of
+        # matrix_parent_inverse - not in the object's current world frame.
+        # The evaluated mesh is local, the same space the object-space
+        # weights were measured against, so the bind matrix is the only
+        # transform in the blend. Moving the object after Tetrahedralize
+        # therefore cannot scramble the targets, matching the rest of
+        # Marrow: the simulation stays where it was tetrahedralized.
+        from ..blender.session import find_cage
+
+        cage = find_cage(obj)
+        if cage is None:
+            raise ValueError(
+                f"{obj.name!r} has no Marrow cage. Run Tetrahedralize first."
+            )
+        bind = np.array(cage.matrix_parent_inverse.inverted().to_4x4())
+        bind_verts = verts @ bind[:3, :3].T + bind[:3, 3]
+        targets = targets_from(idx, w, bind_verts)
     finally:
         for m in swapped:
             m.show_viewport = False
+        for m in parked:
+            m.show_viewport = True
         mesh.vertices.foreach_set("co", current)
         mesh.update()
     return targets
