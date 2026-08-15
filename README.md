@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.7.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-0.9.2.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -53,7 +53,7 @@ Moving the playhead **before the start frame** resets a live body: the cache is 
 
 Turning **Live** off stops simulation entirely for that object.
 
-A skip of up to 8 frames is caught up, so playback that drops frames does not stall. A larger jump plays whatever is cached and otherwise leaves the mesh where it is, because chasing hundreds of frames inside a frame handler would lock the UI.
+A skip of up to 8 frames is caught up, so playback that drops frames does not stall. A larger jump plays whatever is cached and otherwise leaves the mesh where it is, because chasing hundreds of frames inside a frame handler would lock the UI. A body that has never simulated is the exception: with no history to protect, the first jump catches up from the start frame in one go, so pressing play mid-timeline just works.
 
 ## Settings
 
@@ -69,6 +69,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Self Collision** | Stop the body passing through itself where it folds. |
 | **Collide With Bodies** | Collide with other Marrow objects that also have it on. Both deform. |
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
+| **Attachment** | An armature or other deforming modifiers drive the sim from the inside. See [Attachment](#attachment). |
+| **Attach Stiffness** | How hard the flesh follows the animation. 1.0 rides it exactly; lower lags, jiggles and overshoots. |
 | **Colliders** | The collection of objects this body collides against. Shape and Sticky are set on each object. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 | **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
@@ -154,6 +156,18 @@ Contact uses the same **Thickness** as self-collision, and the group takes the l
 
 Cost is surface nodes of one body times surface nodes of the other, per pair, with N bodies making N² pairs. Two or three bodies at Resolution 0.1 is comfortable. A crowd is not.
 
+### Attachment
+
+**Attachment** makes an armature - or any deforming modifier - drive the simulation from the inside instead of bending the result afterwards. Every frame Marrow evaluates the object's modifier stack against the stored rest shape and pulls each cage node towards where the stack puts it, so the bones lead and the flesh follows with the full XPBD behaviour: inertia, jiggle, collision and tearing all stay in the loop.
+
+**Attach Stiffness** is how hard the flesh follows. 1.0 rides the animation exactly; lower values let the bones lead and the flesh lag, jiggle and overshoot.
+
+While Attachment is on, the object's own modifiers are **muted in the display**, viewport and render. They feed the targets, and the written simulation is the display; leaving them shown would deform the result a second time - measured at exactly twice the bone travel. Toggling Attachment off or De-tetrahedralize hands the original visibility back. The targets come from Blender's evaluated mesh, so linear and dual quaternion skinning both work without Marrow reimplementing either.
+
+Contacts keep the last word: the attachment pull runs before collision, so a ground plane or collider still stops a body the bone drags into it.
+
+Attachment needs the object to keep its vertex count - a modifier that adds or removes vertices breaks the weight table and is reported on the console. Weights are synthesized once against the rest shape; editing the mesh afterwards needs a re-tetrahedralize, same rule as the bind data.
+
 ### Ground plane
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
@@ -191,6 +205,7 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 - **Resolution changes the physics, not just the detail.** Every cage node carries the same mass regardless of cell size, so a finer cage makes the same object heavier while Stiffness stays put, and it sags further. Going from 0.25 to 0.1 on a unit sphere takes it from 461 to 5,104 mass units. Expect to re-tune Stiffness and Volume Preservation after a Resolution change rather than treating them as absolute.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
 - **No plasticity, anisotropy or per-region materials.**
+- **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.
 
 ### A note on GPU reliability

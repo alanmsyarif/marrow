@@ -10,6 +10,7 @@ import numpy as np
 
 import marrow
 from marrow.blender import handlers
+from marrow.blender.attach import DISPLAY_KEY
 from marrow.blender.session import find_cage
 from marrow.blender.storage import ATTACH_IDX
 
@@ -160,6 +161,67 @@ def test_the_ground_plane_outranks_the_bone():
         )
     finally:
         handlers.unregister_handler()
+
+
+def test_the_displayed_mesh_is_not_deformed_twice():
+    """The armature modifier feeds the targets; the written simulation is
+    the display. Leaving the modifier shown would bend the result a second
+    time - measured at exactly twice the bone travel - so attachment mutes
+    it in viewport and render while it is on, and what the viewport shows
+    must be the cached simulation, nothing more."""
+    obj = _skinned_body(shift=(2.0, 0.0, 0.0))
+    obj.marrow.attach_enabled = True
+    obj.marrow.attach_stiffness = 1.0
+    bpy.ops.marrow.tetrahedralize()
+    modifier = obj.modifiers[0]
+    assert modifier.show_viewport is False and modifier.show_render is False, (
+        "attachment on must mute the object's own modifiers"
+    )
+    session = _bake(obj)
+    try:
+        bpy.context.scene.frame_set(FRAMES[1])
+        simulated = _centroid(session.frame_positions(FRAMES[1]))
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        evaluated = obj.evaluated_get(depsgraph)
+        me = evaluated.to_mesh()
+        try:
+            verts = np.empty(len(me.vertices) * 3)
+            me.vertices.foreach_get("co", verts)
+        finally:
+            evaluated.to_mesh_clear()
+        displayed = _centroid(verts.reshape(-1, 3))
+        assert abs(displayed[0] - 2.0) < 1e-2, (
+            f"displayed mesh at {displayed[0]:+.3f} m, bone travelled 2.0 - "
+            "the modifier bent the simulation a second time"
+        )
+        assert np.allclose(displayed, simulated, atol=1e-3), (
+            f"displayed {displayed} is not the cached simulation {simulated}"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
+def test_toggling_attach_off_hands_the_modifiers_back():
+    """The mute is borrowed visibility, not owned: the original state is
+    stored on the object and handed back by the toggle and by
+    De-tetrahedralize."""
+    obj = _skinned_body(shift=(2.0, 0.0, 0.0))
+    obj.marrow.attach_enabled = True
+    bpy.ops.marrow.tetrahedralize()
+    modifier = obj.modifiers[0]
+    assert modifier.show_viewport is False
+    assert DISPLAY_KEY in obj
+
+    obj.marrow.attach_enabled = False
+    assert modifier.show_viewport is True and modifier.show_render is True
+    assert DISPLAY_KEY not in obj
+
+    obj.marrow.attach_enabled = True
+    assert modifier.show_viewport is False
+    bpy.ops.marrow.detetrahedralize()
+    assert obj.marrow.attach_enabled is False
+    assert modifier.show_viewport is True and modifier.show_render is True
+    assert DISPLAY_KEY not in obj
 
 
 def test_attach_off_leaves_the_classic_trajectory_alone():

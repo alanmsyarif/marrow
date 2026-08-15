@@ -153,6 +153,9 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
         # The update callback puts the object's own material back in slot 0.
         if obj.marrow.false_color != "OFF":
             obj.marrow.false_color = "OFF"
+        # The update callback hands the modifiers' visibility back.
+        if obj.marrow.attach_enabled:
+            obj.marrow.attach_enabled = False
 
         remove_cage(obj)
         restored = restore_rest(obj.data)

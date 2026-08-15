@@ -13,6 +13,42 @@ import numpy as np
 from ..blender.storage import read_attach, read_rest, write_attach
 from ..core.attach import synth_weights, targets_from
 
+# Where the modifiers' pre-mute visibility is stored on the object, so
+# toggling Attachment off or De-tetrahedralize can hand the display back.
+DISPLAY_KEY = "marrow_attach_mod_display"
+
+
+def mute_modifiers(obj, muted: bool) -> None:
+    """While attachment is on, the object's own modifiers feed the
+    simulation instead of bending its display.
+
+    The targets sample the evaluated mesh the modifiers produce, and the
+    written simulation IS the display - leaving the modifiers shown would
+    deform the result a second time, measured at exactly twice the bone
+    travel. The original visibility is stored on the object so it can be
+    handed back; modifiers added while muted are left alone both ways.
+    """
+    if muted:
+        if DISPLAY_KEY not in obj:
+            # ID properties take dicts of plain arrays, not lists of lists.
+            obj[DISPLAY_KEY] = {
+                m.name: [bool(m.show_viewport), bool(m.show_render)]
+                for m in obj.modifiers
+            }
+        for m in obj.modifiers:
+            m.show_viewport = False
+            m.show_render = False
+        return
+    stored = obj.get(DISPLAY_KEY)
+    if stored is None:
+        return
+    for m in obj.modifiers:
+        row = stored.get(m.name)
+        if row is not None:
+            m.show_viewport = bool(row[0])
+            m.show_render = bool(row[1])
+    del obj[DISPLAY_KEY]
+
 
 def ensure_weights(obj, tetmesh):
     """``(idx, w)`` for ``obj``'s cage, computing and caching them if new.
@@ -73,6 +109,16 @@ def sample_targets(obj, idx, w):
     current = np.empty(count * 3, dtype=np.float64)
     mesh.vertices.foreach_get("co", current)
 
+    # The modifiers are muted in the display while attachment is on, but
+    # sampling is exactly the one evaluation that needs them on.
+    swapped = []
+    stored = obj.get(DISPLAY_KEY)
+    if stored is not None:
+        for m in obj.modifiers:
+            if m.name in stored and not m.show_viewport:
+                m.show_viewport = True
+                swapped.append(m)
+
     # Restore only after the evaluated mesh has been read; an exception in
     # between must not strand the object at its rest shape.
     targets = None
@@ -99,6 +145,8 @@ def sample_targets(obj, idx, w):
         world_verts = verts @ world[:3, :3].T + world[:3, 3]
         targets = targets_from(idx, w, world_verts)
     finally:
+        for m in swapped:
+            m.show_viewport = False
         mesh.vertices.foreach_set("co", current)
         mesh.update()
     return targets

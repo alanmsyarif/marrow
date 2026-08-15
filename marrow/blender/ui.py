@@ -86,6 +86,13 @@ def _update_false_color(self, context):
         false_color.prime(obj, self.false_color)
 
 
+def _update_attach(self, context):
+    """Attachment owns the display: mute the object's modifiers, or hand back."""
+    from . import attach
+
+    attach.mute_modifiers(self.id_data, self.attach_enabled)
+
+
 class MarrowSettings(bpy.types.PropertyGroup):
     resolution: bpy.props.FloatProperty(
         name="Resolution",
@@ -174,9 +181,12 @@ class MarrowSettings(bpy.types.PropertyGroup):
             "Pull the cage towards the object's animated shape each frame, "
             "so an armature or other deforming modifiers drive the "
             "simulation from the inside instead of bending the result "
-            "afterwards. Requires the object to keep its vertex count"
+            "afterwards. The object's own modifiers are muted in the "
+            "display while this is on. Requires the object to keep its "
+            "vertex count"
         ),
         default=False,
+        update=_update_attach,
     )
     attach_stiffness: bpy.props.FloatProperty(
         name="Attach Stiffness",
