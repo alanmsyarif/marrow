@@ -6,7 +6,7 @@ from marrow.core.coloring import color_tets
 from marrow.core.layout import color_ordered, pack_nodes, pack_rest, pack_tets, unpack_vec3
 from marrow.core.solver_ref import SolverParams, make_state, precompute, solve_constraints
 from marrow.gpu.kernels import SOLVE_SRC, build
-from marrow.gpu.textures import download, flush, make_flush_shader, upload
+from marrow.gpu.textures import blank, download, flush, make_flush_shader, upload
 
 gpu.init()
 
@@ -16,11 +16,14 @@ IMAGES = [
     ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
     ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
     ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
+    ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
+    ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
 ]
 PUSH = [
     ("FLOAT", "h"),
     ("FLOAT", "mu"),
     ("FLOAT", "lam"),
+    ("FLOAT", "tear_threshold"),
     ("INT", "color_begin"),
     ("INT", "color_end"),
 ]
@@ -36,6 +39,10 @@ def _run_solve(mesh, state, params, h):
     tex_p = upload(pack_nodes(state.predicted, state.inv_mass))
     tex_t = upload(pack_tets(ordered))
     tex_r = upload(pack_rest(dm_inv, rest_vol))
+    tex_torn = blank(mesh.n_tets, fmt="R32F")
+    # Tearing is off for parity, so the counter is never read - but the image
+    # still has to be bound for the kernel to run.
+    tex_live = blank(mesh.n_nodes, fmt="R32F")
 
     for c in range(len(offsets) - 1):
         begin, end = int(offsets[c]), int(offsets[c + 1])
@@ -45,7 +52,10 @@ def _run_solve(mesh, state, params, h):
         shader.image("p", tex_p)
         shader.image("tets", tex_t)
         shader.image("rest", tex_r)
+        shader.image("torn", tex_torn)
+        shader.image("live", tex_live)
         shader.uniform_float("h", h)
+        shader.uniform_float("tear_threshold", 0.0)  # tearing off for parity
         shader.uniform_float("mu", params.mu)
         shader.uniform_float("lam", params.lam)
         shader.uniform_int("color_begin", begin)

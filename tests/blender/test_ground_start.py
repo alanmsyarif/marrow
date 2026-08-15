@@ -4,7 +4,7 @@ The collide pass depenetrates by moving the predicted position and integrate
 reads that move as velocity. Mid-simulation the depth is bounded by v * h, so
 the velocity read back is the one that caused it. The starting state has no
 such bound, and a half-buried body used to leave its first substep at
-hundreds of metres per second and skin into spikes.
+hundreds of metres per second, tear itself apart and skin into spikes.
 """
 
 import numpy as np
@@ -18,11 +18,11 @@ SUNK = BLOCK.nodes - np.array([0.0, 0.0, 0.8])
 SUNK_MESH = type(BLOCK)(SUNK, BLOCK.tets)
 
 
-def _solver(mesh, ground_on=True):
+def _solver(mesh, ground_on=True, tear_threshold=0.0):
     state = make_state(mesh.nodes)
     return GPUSolver(
         mesh, state.inv_mass, SolverParams(),
-        ground_z=0.0, ground_on=ground_on,
+        ground_z=0.0, ground_on=ground_on, tear_threshold=tear_threshold,
     )
 
 
@@ -43,8 +43,17 @@ def test_the_lift_is_rigid_so_the_shape_survives():
     )
 
 
+def test_a_buried_cage_does_not_tear_itself_apart_on_the_first_frame():
+    solver = _solver(SUNK_MESH, tear_threshold=1.5)
+    solver.step()
+    assert solver.torn_flags().sum() == 0.0, (
+        f"{solver.torn_flags().sum():.0f} tets tore just from resting on the "
+        f"ground plane"
+    )
+
+
 def test_a_buried_cage_stays_put_instead_of_being_launched():
-    solver = _solver(SUNK_MESH)
+    solver = _solver(SUNK_MESH, tear_threshold=1.5)
     start = solver.positions()[:, 2].mean()
     for _ in range(10):
         solver.step()

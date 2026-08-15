@@ -45,9 +45,11 @@ Editing the mesh's topology between the two invalidates the stored shape, since 
 
 | | |
 |---|---|
-| **Live** (default) | Simulates as you play, caching as it goes. Returning to the start frame restarts and re-reads the sliders. |
-| **Bake** | Simulates the whole scene range up front. The result is then fixed: replaying it, including from the start frame, never re-simulates, so it survives slider changes until you free it. |
+| **Live** (default) | Simulates as you play, caching as it goes. Returning to the start frame restarts and re-reads the sliders. Scrubbing *below* the start frame resets the body to rest. |
+| **Bake** | Simulates the whole scene range up front. The result is then fixed: replaying it, including from the start frame or below it, never re-simulates, so it survives slider changes until you free it. |
 | **Free** | Discards the cache and releases GPU memory. |
+
+Moving the playhead **before the start frame** resets a live body: the cache is dropped, the mesh snaps back to its rest shape and False Color repaints at rest. Paused or playing makes no difference. A baked body is exempt and keeps replaying its cache.
 
 Turning **Live** off stops simulation entirely for that object.
 
@@ -63,6 +65,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
+| **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
 | **Self Collision** | Stop the body passing through itself where it folds. |
 | **Collide With Bodies** | Collide with other Marrow objects that also have it on. Both deform. |
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
@@ -103,6 +106,21 @@ Plain non-penetration can only push, so a collider that lifts away leaves the bo
 
 > **Do not start a body already overlapping a sticky collider.** Every buried node is grabbed on the first frame and welded to whichever face happened to be nearest. They scatter across different faces and turn the body inside out. Measured on a sphere half-buried in a sticky box: 219 of 461 nodes seized immediately, 12% of tets inverted, render mesh shredded. Move the collider clear at the start frame, or leave Sticky off. A collider that presses in *during* the simulation is fine, and is the intended way to set a stretch shot up.
 
+### Tearing
+
+Tearing is **constraint failure**, not fracture. A tetrahedron past the strain threshold stops resisting distortion, permanently, so the material necks, stretches and pulls apart. It does **not** split into separate pieces with a visible gap: the render mesh is never modified, which is what keeps your UVs, shape keys and material slots intact.
+
+**Tear Strain is the largest principal stretch a tet survives**, so it reads the same in every direction: 1.5 means failure once anything is pulled to 1.5x its rest length, whether that is a pull along one axis, a uniform swell or a shear. Rotation is not strain and never tears.
+
+One consequence worth knowing: a volume-preserving squash stretches the material sideways, and that counts. Press a blob to a quarter of its height and it has stretched 2x laterally, which fails a 1.5 threshold. If a heavy press is tearing material you wanted intact, raise Tear Strain or switch Tearing off for that shot.
+
+Two things a torn tet still does:
+
+- **It keeps a volume constraint**, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1x on a stretch test.
+- **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
+
+**Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. Stick Break does not substitute: it measures how far a contact point *drags across the collider*, which barely moves in a straight pull, so a stretch that should snap keeps stretching. If a stretch shot smears instead of separating, switch Tearing on.
+
 ### Self collision
 
 Off by default, because it is the second most expensive knob after Substeps. Measured on an RTX 5050, cost per frame at 10 substeps:
@@ -140,7 +158,7 @@ Cost is surface nodes of one body times surface nodes of the other, per pair, wi
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
 
-This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at 226 m/s, which shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.
+This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at 226 m/s, which is past any tear threshold and shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.
 
 ### False color
 

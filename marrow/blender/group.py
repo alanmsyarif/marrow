@@ -110,11 +110,21 @@ def advance(session, frame: int, frame_start: int):
     session._check_live()
     frame, frame_start = int(frame), int(frame_start)
 
-    # A baked cache is played back, never regenerated.
-    if session.baked or not session.live or frame < frame_start:
+    # A baked cache is played back, never regenerated - a scrub below the
+    # start frame included, which is the one thing that resets a live body.
+    if session.baked or not session.live:
         return session._cache.get(frame)
 
     members = members_of(session)
+
+    if frame < frame_start:
+        # There is no frame to serve down here, and leaving the last
+        # simulated pose on screen reads as a simulated state when it is a
+        # stale one. Reset instead, and hand back the rest shape so the
+        # viewport shows it. Playback running or paused makes no difference:
+        # the handler sees a scrub either way.
+        _restart(members, frame_start)
+        return session.solver.skin()
 
     # Returning to the start always restarts, even if that frame is already
     # cached. That is what makes edited sliders take effect without having to

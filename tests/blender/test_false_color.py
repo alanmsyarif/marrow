@@ -117,3 +117,25 @@ def test_detetrahedralize_restores_the_material_and_clears_the_attribute():
         assert obj.data.attributes.get(ATTR) is None
     finally:
         handlers.unregister_handler()
+def test_resetting_below_the_start_frame_repaints_the_rest_colours():
+    """A reset puts the cage at rest, so the stretch display must say so.
+
+    Without this the surface keeps the colours of the last simulated frame,
+    which reads as a deformed body while the mesh on screen is back at rest.
+    """
+    obj = _cube()
+    obj.marrow.false_color = "STRETCH"
+    try:
+        _drop_and_squash(obj)
+        squashed = _values(obj).copy()
+        assert not np.allclose(squashed, 1.0, atol=1e-3), (
+            "setup: a squashed body should not be painted at rest"
+        )
+
+        bpy.context.scene.frame_set(0)
+        assert np.allclose(_values(obj), 1.0, atol=1e-3), (
+            f"reset left stale colours, range "
+            f"{_values(obj).min():.3f}..{_values(obj).max():.3f}"
+        )
+    finally:
+        handlers.unregister_handler()

@@ -77,7 +77,7 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
-                 colliders=None, stick_break=0.0,
+                 colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0):
         self.mesh = mesh
         self.params = params
@@ -90,6 +90,7 @@ class GPUSolver:
         # Each entry is (kind, to_local, to_world) with kind 1 sphere, 2 box,
         # optionally followed by a sticky flag.
         self.colliders = list(colliders or [])
+        self.tear_threshold = float(tear_threshold)
         self.stick_break = float(stick_break)
         self.n_nodes = mesh.n_nodes
 
@@ -109,11 +110,25 @@ class GPUSolver:
         self.tex_rest = upload_verified(pack_rest(dm_inv, rest_vol))
         # Unpermuted, for the skin kernel's bind indices.
         self.tex_tets_orig = upload_verified(pack_tets(mesh.tets))
+        # One flag per tet. Zero means intact; set once, never cleared.
+        self.tex_torn = blank(mesh.n_tets, fmt="R32F")
         # One flag per node: set by the contact passes when a node received a
         # correction this substep, zeroed by predict. Scopes the integrate
         # velocity clamp to nodes actually in contact. Always allocated so
         # predict and integrate can bind it unconditionally.
         self.tex_mark = blank(self.n_nodes, fmt="R32F")
+        # One counter per node: how many of its tets are still intact. The tear
+        # rule reads it to refuse to orphan a node - see SOLVE_SRC. Incidence
+        # is the same whichever tet order it is counted over.
+        self.tex_live = upload_verified(
+            pack_scalar(
+                np.bincount(
+                    np.asarray(mesh.tets, dtype=np.int64).ravel(),
+                    minlength=self.n_nodes,
+                )
+            ),
+            fmt="R32F",
+        )
         # One texel per node: .xyz the contact point in the holding collider's
         # local space, .w that collider's id. Zero means the node is free.
         self.tex_stick = blank(self.n_nodes)
@@ -182,8 +197,11 @@ class GPUSolver:
             "solve", kernels.SOLVE_SRC,
             [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
              ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "rest", {"READ"})],
+             ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
+             ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
+             ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"})],
             [("FLOAT", "h"), ("FLOAT", "mu"), ("FLOAT", "lam"),
+             ("FLOAT", "tear_threshold"),
              ("INT", "color_begin"), ("INT", "color_end")],
         )
         self.sh_collide = kernels.build(
@@ -201,6 +219,7 @@ class GPUSolver:
 
         # Instance state, never module state - see make_flush_shader.
         self.sh_flush = make_flush_shader("RGBA32F")
+        self.sh_flush_r32f = make_flush_shader("R32F")
         self._skin_mark = 0
         self.sh_integrate = kernels.build(
             "integrate", kernels.INTEGRATE_SRC,
@@ -221,13 +240,13 @@ class GPUSolver:
         only sink a node by v * h, so the velocity it reads back is the
         velocity that put it there. The starting state is the one case with
         no such bound. A unit ball authored straddling the ground plane leaves
-        its first substep at 226 m/s (measured, 10 substeps), which shreds
-        the body into spikes.
+        its first substep at 226 m/s (measured, 10 substeps), which is past
+        any tear threshold and shreds the body into spikes.
 
         Translating is what makes this safe. Clamping each node onto the plane
         instead would flatten the buried half, and the elastic energy stored in
-        that pancake launches it nearly as hard - measured 11 m/s on the
-        same ball. A translation leaves the rest shape, the bind
+        that pancake launches it nearly as hard - measured 11 m/s and 22 torn
+        tets on the same ball. A translation leaves the rest shape, the bind
         weights and the tet winding all untouched.
 
         ponytail: ground plane only. A cage authored inside a sphere or box
@@ -297,7 +316,10 @@ class GPUSolver:
             self.sh_solve.image("p", self.tex_p)
             self.sh_solve.image("tets", self.tex_tets)
             self.sh_solve.image("rest", self.tex_rest)
+            self.sh_solve.image("torn", self.tex_torn)
+            self.sh_solve.image("live", self.tex_live)
             self.sh_solve.uniform_float("h", h)
+            self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
             self.sh_solve.uniform_float("mu", self.params.mu)
             self.sh_solve.uniform_float("lam", self.params.lam)
             self.sh_solve.uniform_int("color_begin", begin)
@@ -446,6 +468,23 @@ class GPUSolver:
             self.n_nodes,
         )
         return _guard_finite(out, "cage nodes", self.n_nodes)
+
+    def torn_flags(self) -> np.ndarray:
+        """One flag per tet, 1.0 where torn, in mesh tet order. Diagnostic path."""
+        flush(self.sh_flush_r32f, self.tex_torn)
+        flat = read_stable(
+            self.tex_torn, nudge=lambda: flush(self.sh_flush_r32f, self.tex_torn)
+        ).reshape(-1)
+        # The texture stores the volume ratio a tet broke at, not a bare flag,
+        # so anything non-zero is torn. Callers want the flag.
+        ordered_flags = (flat[: self.mesh.n_tets] > 0.0).astype(np.float64)
+        # The solve kernel indexes tets by colour-ordered position, so that is
+        # the order the texture is in. Callers think in mesh order, and the two
+        # only agree when every tet happens to land in colour 0. Anything that
+        # maps a flag back onto mesh.tets needs this.
+        out = np.empty_like(ordered_flags)
+        out[self._tet_order] = ordered_flags
+        return out
 
     def poison_for_test(self) -> None:
         """Force a non-finite state, so the NaN guard can be tested honestly."""

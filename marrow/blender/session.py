@@ -28,7 +28,7 @@ class MarrowSession:
     """Owns the GPU state and the baked cache for one object."""
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
-                 collider_objects=None, stick_break=0.0,
+                 collider_objects=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
@@ -38,6 +38,7 @@ class MarrowSession:
         self.ground_z = float(ground_z)
         self.ground_on = bool(ground_on)
         self.collider_objects = list(collider_objects or [])
+        self.tear_threshold = float(tear_threshold)
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
         self.body_distance = float(body_distance)
@@ -129,6 +130,7 @@ class MarrowSession:
             ground_z=self.ground_z,
             ground_on=self.ground_on,
             colliders=self._collider_specs(),
+            tear_threshold=self.tear_threshold,
             stick_break=self.stick_break,
             self_distance=self.self_distance,
             body_distance=self.body_distance,
@@ -158,6 +160,9 @@ class MarrowSession:
         )
         self.ground_z = float(settings.ground_z)
         self.ground_on = bool(settings.ground_enabled)
+        self.tear_threshold = (
+            float(settings.tear_threshold) if settings.tearing_enabled else 0.0
+        )
         self.stick_break = float(settings.stick_break)
         # The panel holds a multiple of Resolution; the solver wants metres.
         self.resolution = float(settings.resolution)
@@ -274,7 +279,13 @@ class MarrowSession:
             return
         nodes = self._cache_nodes.get(frame)
         if nodes is None:
-            return
+            # The only frame served without cached nodes is a reset below the
+            # start frame, and a reset leaves the cage at rest. Comparing rest
+            # against rest paints the whole surface at 1, which is the honest
+            # answer - keeping the last frame's colours would show a deformed
+            # body over a mesh that is back at rest. No readback needed: the
+            # rest cage is already here on the CPU.
+            nodes = self.tetmesh.nodes
         from ..core import metric
         from . import false_color
 

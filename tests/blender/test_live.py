@@ -129,6 +129,72 @@ def test_a_baked_cache_is_not_regenerated_at_the_start_frame():
         handlers.unregister_handler()
 
 
+def test_scrubbing_before_the_start_resets_a_live_body():
+    """Below the start there is no frame to serve, so hold nothing back.
+
+    Leaving the last simulated pose on screen reads as a simulated state when
+    it is really a stale one, and playback being paused makes no difference -
+    a scrub is a scrub.
+    """
+    obj = _cube()
+    rest = _positions(obj).copy()
+    scene = bpy.context.scene
+    try:
+        for frame in range(1, 11):
+            scene.frame_set(frame)
+        assert not np.allclose(_positions(obj), rest, atol=1e-6), (
+            "setup: the body should have moved by frame 10"
+        )
+
+        scene.frame_set(0)
+        assert np.allclose(_positions(obj), rest, atol=1e-5), (
+            "scrubbing before the start must put the body back at rest"
+        )
+        assert handlers.SESSIONS[obj.name].frame_positions(10) is None, (
+            "a reset must drop the cache, or replaying would serve stale frames"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
+def test_the_reset_follows_the_start_frame_not_frame_one():
+    obj = _cube()
+    rest = _positions(obj).copy()
+    scene = bpy.context.scene
+    scene.frame_start, scene.frame_end = 5, 30
+    try:
+        for frame in range(5, 15):
+            scene.frame_set(frame)
+        assert not np.allclose(_positions(obj), rest, atol=1e-6)
+
+        scene.frame_set(4)
+        assert np.allclose(_positions(obj), rest, atol=1e-5), (
+            "frame 4 is before a start frame of 5, so it must reset"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
+def test_a_baked_cache_is_not_reset_by_scrubbing_before_the_start():
+    obj = _cube()
+    scene = bpy.context.scene
+    scene.frame_end = 6
+    try:
+        assert bpy.ops.marrow.bake() == {"FINISHED"}
+        session = handlers.SESSIONS[obj.name]
+        scene.frame_set(6)
+        baked_six = _positions(obj).copy()
+
+        scene.frame_set(0)
+        scene.frame_set(6)
+        assert session.baked is True, "a bake must survive a scrub before the start"
+        assert np.allclose(_positions(obj), baked_six, atol=1e-9), (
+            "a baked cache must replay untouched after scrubbing below the start"
+        )
+    finally:
+        handlers.unregister_handler()
+
+
 def test_a_small_skip_is_caught_up():
     obj = _cube()
     scene = bpy.context.scene

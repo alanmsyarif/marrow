@@ -139,6 +139,26 @@ class MarrowSettings(bpy.types.PropertyGroup):
         description="Stop the body falling through a horizontal plane",
         default=False,
     )
+    tearing_enabled: bpy.props.BoolProperty(
+        name="Tearing",
+        description=(
+            "Let over-stretched material fail permanently. Torn tets stop "
+            "resisting, so the body goes slack and pulls apart"
+        ),
+        default=False,
+    )
+    tear_threshold: bpy.props.FloatProperty(
+        name="Tear Strain",
+        description=(
+            "Largest stretch ratio material survives. 1.5 means a tet fails "
+            "once anything in it is pulled to 1.5x its rest length, in any "
+            "direction. Lower is more brittle. Volume-preserving squashing "
+            "stretches sideways and counts, so a heavy press can tear too"
+        ),
+        default=1.5,
+        min=1.01,
+        soft_max=5.0,
+    )
     self_collision: bpy.props.BoolProperty(
         name="Self Collision",
         description=(
@@ -263,6 +283,12 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = ground.row()
         row.enabled = settings.ground_enabled
         row.prop(settings, "ground_z")
+
+        tearing = sim.box()
+        tearing.prop(settings, "tearing_enabled")
+        row = tearing.row()
+        row.enabled = settings.tearing_enabled
+        row.prop(settings, "tear_threshold")
 
         contact = sim.box()
         contact.prop(settings, "self_collision")

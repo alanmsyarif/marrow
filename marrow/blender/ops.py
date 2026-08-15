@@ -234,6 +234,9 @@ def session_for(obj) -> MarrowSession:
         ground_z=float(settings.ground_z),
         ground_on=bool(settings.ground_enabled),
         collider_objects=collider_objects_of(obj),
+        tear_threshold=(
+            float(settings.tear_threshold) if settings.tearing_enabled else 0.0
+        ),
         stick_break=float(settings.stick_break),
         self_distance=thickness if settings.self_collision else 0.0,
         body_distance=thickness if settings.body_collision else 0.0,
