@@ -35,7 +35,7 @@ from ..core.layout import (
     texture_shape,
     unpack_vec3,
 )
-from ..core.solver_ref import precompute
+from ..core.solver_ref import attach_compliance, precompute
 from ..core.tetmesh import surface_nodes
 from ..gpu import kernels
 from ..gpu.textures import (
@@ -78,7 +78,8 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0, body_distance=0.0):
+                 self_distance=0.0, body_distance=0.0,
+                 attach_stiffness=0.0, attach_targets=None):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -94,12 +95,34 @@ class GPUSolver:
         self.stick_break = float(stick_break)
         self.n_nodes = mesh.n_nodes
 
-        start = self._lift_out_of_ground(mesh.nodes)
+        # Attachment pulls nodes towards where the animation wants them,
+        # after the elastic solve. The rest shape the elastic constraints
+        # were built from stays the modelled shape regardless - only the
+        # starting positions ride the pose, so the body begins posed
+        # instead of snapping towards the pose on frame one.
+        self.attach_enabled = float(attach_stiffness) > 0.0
+        self.attach_compliance = 0.0
+        rest_start = self._lift_out_of_ground(mesh.nodes)
+        start = rest_start
+        if self.attach_enabled:
+            if attach_targets is None:
+                raise ValueError(
+                    "attach_stiffness is set but no attach_targets were given"
+                )
+            attach_targets = np.asarray(attach_targets, dtype=np.float64)
+            if attach_targets.shape != mesh.nodes.shape:
+                raise ValueError(
+                    f"attach_targets must be {mesh.nodes.shape}, "
+                    f"got {attach_targets.shape}"
+                )
+            stiffness = float(attach_stiffness)
+            self.attach_compliance = attach_compliance(stiffness, self.params.dt)
+            start = self._lift_out_of_ground(attach_targets)
 
         colors = color_tets(mesh.tets, mesh.n_nodes)
         ordered, self.offsets = color_ordered(mesh.tets, colors)
         self._tet_order = color_order(colors)   # colour-ordered slot -> mesh tet
-        dm_inv, rest_vol = precompute(start, ordered)
+        dm_inv, rest_vol = precompute(rest_start, ordered)
 
         self.tex_x = upload_verified(pack_nodes(start, inv_mass))
         self.tex_p = blank(self.n_nodes)
@@ -157,8 +180,9 @@ class GPUSolver:
             # this is the per-node configuration those were built from, which
             # the rest-distance gate compares against. Only self-collision has
             # a rest state to compare to, so only self-collision uploads this.
+            # Always the modelled rest shape, never a posed start.
             self.tex_rest_pos = upload_verified(
-                pack_nodes(start, np.zeros(self.n_nodes))
+                pack_nodes(rest_start, np.zeros(self.n_nodes))
             )
             self.sh_self = kernels.build(
                 "self_collide", kernels.SELF_COLLIDE_SRC,
@@ -208,6 +232,17 @@ class GPUSolver:
             "collide", kernels.COLLIDE_SRC,
             kernels.COLLIDE_IMAGES, kernels.COLLIDE_PUSH,
         )
+        # Attachment textures and kernel exist only when the pass is on, so
+        # a body without an armature pays nothing.
+        self.sh_attach = None
+        if self.attach_enabled:
+            self.tex_target = upload_verified(
+                pack_nodes(attach_targets, np.zeros(self.n_nodes))
+            )
+            self.sh_attach = kernels.build(
+                "attach", kernels.ATTACH_SRC,
+                kernels.ATTACH_IMAGES, kernels.ATTACH_PUSH,
+            )
         # Mesh collider fields, keyed by id() of the baked array. The array is
         # kept in the value so it cannot be collected and have its id reused.
         # Rebuilt specs hand back the same cached array every frame, so an
@@ -326,6 +361,7 @@ class GPUSolver:
             self.sh_solve.uniform_int("color_end", end)
             gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
+        self._dispatch_attach(node_groups, h)
         self._dispatch_self_collision(node_groups)
         for other in others:
             self._dispatch_body_collision(node_groups, other)
@@ -350,6 +386,44 @@ class GPUSolver:
         max_vel = 0.2 * thickness / h if thickness > 0.0 else 0.0
         self.sh_integrate.uniform_float("max_vel", max_vel)
         gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
+
+    def _dispatch_attach(self, node_groups, h) -> None:
+        """Pull free nodes towards this frame's animation targets.
+
+        Runs right after the elastic solve: bone motion enters the
+        position-based loop here, so inertia and every contact pass see
+        it. Contacts run afterwards and keep the last word.
+        """
+        if self.sh_attach is None:
+            return
+        self.sh_attach.bind()
+        self.sh_attach.image("p", self.tex_p)
+        self.sh_attach.image("target", self.tex_target)
+        self.sh_attach.uniform_float("h", h)
+        self.sh_attach.uniform_float("compliance", self.attach_compliance)
+        self.sh_attach.uniform_int("n_nodes", self.n_nodes)
+        gpu.compute.dispatch(self.sh_attach, node_groups, 1, 1)
+
+    def set_targets(self, targets) -> None:
+        """Replace the animation targets. Called once per frame, not per substep:
+        the pose is constant across a frame's substeps, which is the same
+        treatment the colliders' transforms get.
+
+        A fresh texture each call. Blender's gpu module has no in-place
+        texture update, and re-uploading into an existing texture is exactly
+        the path upload_verified exists to distrust - a new allocation has no
+        stale contents to read.
+        """
+        if not self.attach_enabled:
+            raise RuntimeError("attachment is not enabled on this solver")
+        targets = np.asarray(targets, dtype=np.float64)
+        if targets.shape != (self.n_nodes, 3):
+            raise ValueError(
+                f"attach targets must be ({self.n_nodes}, 3), got {targets.shape}"
+            )
+        self.tex_target = upload(
+            pack_nodes(targets, np.zeros(self.n_nodes))
+        )
 
     def _dispatch_self_collision(self, node_groups) -> None:
         """Push apart surface nodes that have come within self_distance.

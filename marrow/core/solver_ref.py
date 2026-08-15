@@ -18,6 +18,7 @@ class SolverParams:
     mu: float = 1.0e4       # deviatoric stiffness
     lam: float = 1.0e5      # hydrostatic (volume) stiffness
     damping: float = 0.999
+    attach: float = 0.0     # attachment stiffness, 0..1; 0 disables the pass
 
 
 @dataclass
@@ -53,8 +54,15 @@ def precompute(nodes: np.ndarray, tets: np.ndarray):
     return dm_inv, rest_vol
 
 
-def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams) -> None:
-    """Advance one frame of ``params.substeps`` XPBD substeps, in place."""
+def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
+         targets=None) -> None:
+    """Advance one frame of ``params.substeps`` XPBD substeps, in place.
+
+    ``targets``, when given alongside ``params.attach > 0``, are the
+    per-node positions the animation wants this frame; the attachment
+    pass pulls nodes towards them after the elastic solve, mirroring the
+    GPU pass order.
+    """
     h = params.dt / params.substeps
     gravity = np.asarray(params.gravity, dtype=np.float64)
     movable = state.inv_mass > 0.0
@@ -67,12 +75,54 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams) -> No
         )
 
         solve_constraints(state, tets, dm_inv, rest_vol, params, h)
+        if params.attach > 0.0 and targets is not None:
+            solve_attachment(
+                state, targets,
+                attach_compliance(params.attach, params.dt), h,
+            )
 
         # integrate
         state.velocities[movable] = (
             (state.predicted[movable] - state.nodes[movable]) / h * params.damping
         )
         state.nodes[movable] = state.predicted[movable]
+
+
+def attach_compliance(stiffness: float, dt: float) -> float:
+    """XPBD compliance for an attachment stiffness in (0, 1].
+
+    The raw map (1 - k) / k is rescaled by dt squared. Compliance enters
+    the projection as alpha / h^2 with h = dt / substeps, so unscaled it
+    would read tens of thousands at typical substep sizes and the slider
+    would be dead everywhere but its last percent. Scaling by dt^2 makes
+    the response a property of the frame, not of the substep count: at
+    k = 0.5 roughly a third of the gap closes per frame, k near 1 rides
+    the bones, and k = 1 is exactly zero compliance - a hard snap.
+    """
+    if stiffness <= 0.0:
+        raise ValueError("attachment stiffness must be positive")
+    return (1.0 - stiffness) / stiffness * float(dt) * float(dt)
+
+
+def solve_attachment(state, targets, compliance: float, h: float) -> None:
+    """Pull every free node towards its animation target, in place.
+
+    One position constraint per node, C = x - q, projected once per
+    substep. ``compliance`` is the XPBD compliance (see
+    attach_compliance); zero is a hard snap, larger values let the flesh
+    lag and overshoot. The projection is diagonal - each node moves along
+    its own constraint only - so no colouring is needed.
+    """
+    if compliance < 0.0:
+        return
+    alpha_tilde = compliance / (h * h)
+    movable = state.inv_mass > 0.0
+    w = state.inv_mass[movable]
+    pull = w / (w + alpha_tilde)
+    state.predicted[movable] += (
+        (np.asarray(targets, dtype=np.float64)[movable] - state.predicted[movable])
+        * pull[:, None]
+    )
 
 
 def _grads_from_dcdf(dcdf: np.ndarray, dm_inv: np.ndarray) -> np.ndarray:

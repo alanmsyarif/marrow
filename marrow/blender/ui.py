@@ -168,6 +168,27 @@ class MarrowSettings(bpy.types.PropertyGroup):
         ),
         default=False,
     )
+    attach_enabled: bpy.props.BoolProperty(
+        name="Attachment",
+        description=(
+            "Pull the cage towards the object's animated shape each frame, "
+            "so an armature or other deforming modifiers drive the "
+            "simulation from the inside instead of bending the result "
+            "afterwards. Requires the object to keep its vertex count"
+        ),
+        default=False,
+    )
+    attach_stiffness: bpy.props.FloatProperty(
+        name="Attach Stiffness",
+        description=(
+            "How hard the flesh follows the animation. 1.0 rides the bones "
+            "exactly; lower values let the bones lead and the flesh lag, "
+            "jiggle and overshoot"
+        ),
+        default=0.5,
+        min=0.0,
+        max=1.0,
+    )
     body_collision: bpy.props.BoolProperty(
         name="Collide With Bodies",
         description=(
@@ -289,6 +310,12 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = tearing.row()
         row.enabled = settings.tearing_enabled
         row.prop(settings, "tear_threshold")
+
+        attach = sim.box()
+        attach.prop(settings, "attach_enabled")
+        row = attach.row()
+        row.enabled = settings.attach_enabled
+        row.prop(settings, "attach_stiffness")
 
         contact = sim.box()
         contact.prop(settings, "self_collision")

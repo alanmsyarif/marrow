@@ -223,6 +223,28 @@ def test_a_large_jump_leaves_the_mesh_alone():
         handlers.unregister_handler()
 
 
+def test_a_large_jump_with_an_empty_cache_catches_up_from_the_start():
+    """The trap attach made visible: tetrahedralize, scrub to where the bones
+    are posed, press play. The first frame change is a jump of the whole
+    timeline, and a session that never simulated used to answer None for
+    every frame after it - the mesh sat at rest while the bones moved. With
+    nothing cached there is no history to protect, so catch up instead.
+    """
+    obj = _cube()
+    rest = _positions(obj).copy()
+    scene = bpy.context.scene
+    try:
+        scene.frame_set(28)  # jump straight in, no cache anywhere
+        assert not np.allclose(_positions(obj), rest, atol=1e-6), (
+            "a fresh session jumped mid-timeline must catch up, not sit at rest"
+        )
+        session = handlers.SESSIONS[obj.name]
+        assert session.frame_positions(1) is not None, "catch-up fills the range"
+        assert session.frame_positions(28) is not None
+    finally:
+        handlers.unregister_handler()
+
+
 def test_live_toggle_without_a_cage_names_the_fix():
     obj = _cube()
     bpy.ops.marrow.detetrahedralize()   # back to a plain mesh, live now off

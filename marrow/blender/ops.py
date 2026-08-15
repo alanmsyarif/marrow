@@ -240,6 +240,8 @@ def session_for(obj) -> MarrowSession:
         stick_break=float(settings.stick_break),
         self_distance=thickness if settings.self_collision else 0.0,
         body_distance=thickness if settings.body_collision else 0.0,
+        attach_enabled=bool(settings.attach_enabled),
+        attach_stiffness=float(settings.attach_stiffness),
     )
 
 

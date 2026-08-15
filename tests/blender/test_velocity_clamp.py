@@ -17,7 +17,7 @@ from marrow.core.layout import pack_nodes, unpack_vec3
 from marrow.core.solver_ref import SolverParams, make_state
 from marrow.core.tetmesh import TetMesh
 from marrow.gpu.solver import GPUSolver
-from marrow.gpu.textures import download, upload
+from marrow.gpu.textures import download, flush, make_flush_shader, upload
 
 THICK = 0.2
 FAST = 100.0
@@ -40,6 +40,9 @@ def _inert(mesh, distance):
 
 
 def _velocities(solver):
+    # Without the flush the readback intermittently returns pre-step
+    # contents - the same hazard every other readback test guards against.
+    flush(make_flush_shader("RGBA32F"), solver.tex_v)
     return unpack_vec3(download(solver.tex_v), solver.n_nodes)
 
 

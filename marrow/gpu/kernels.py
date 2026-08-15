@@ -577,6 +577,47 @@ void main()
 }
 """
 
+ATTACH_SRC = """
+// Attachment: pull every free node towards where the animation says it
+// should be this frame. One position constraint per node, C = x - q, and
+// the projection is diagonal - a thread reads and writes only its own
+// texel - so this is a plain per-node dispatch with no colouring.
+//
+// Runs after the elastic solve and before every contact pass, so the
+// ground plane, colliders and sticky grabs keep the last word on a node
+// the animation also wants.
+
+void main()
+{
+  int i = int(gl_GlobalInvocationID.x);
+  if (i >= n_nodes) { return; }
+  ivec2 c = texel(i);
+
+  vec4 pi = imageLoad(p, c);
+  if (!(pi.w > 0.0)) { return; }   // a pin outranks the armature
+
+  // XPBD projection of C = x - q with unit gradients:
+  // dx = -w * C / (w + alpha_tilde), compliance sent as alpha and folded
+  // by h here. Zero stiffness never reaches this dispatch, so the
+  // (1 - k) / k mapping cannot divide by zero.
+  vec3 target = imageLoad(target, c).xyz;
+  float pull = pi.w / (pi.w + compliance / (h * h));
+  vec3 pos = pi.xyz + (target - pi.xyz) * pull;
+  imageStore(p, c, vec4(pos, pi.w));
+}
+"""
+
+ATTACH_IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "target", {"READ"}),
+]
+ATTACH_PUSH = [
+    ("FLOAT", "h"),
+    ("FLOAT", "compliance"),
+    ("INT", "n_nodes"),
+]
+
+
 SKIN_SRC = """
 void main()
 {

@@ -29,7 +29,8 @@ class MarrowSession:
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
                  collider_objects=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0, body_distance=0.0):
+                 self_distance=0.0, body_distance=0.0,
+                 attach_enabled=False, attach_stiffness=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -42,6 +43,13 @@ class MarrowSession:
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
         self.body_distance = float(body_distance)
+        # Attachment feeds the object's animation into the sim as targets.
+        # Weights and the first target set are built in _build_solver, so a
+        # restart (which re-reads the panel and rebuilds) picks up toggles.
+        self.attach_enabled = bool(attach_enabled)
+        self.attach_stiffness = float(attach_stiffness)
+        self.attach_idx = None
+        self.attach_w = None
         # Drives the mesh-collider SDF grid: the field only has to resolve
         # detail the cage can represent, so it tracks Resolution rather than
         # adding a setting of its own.
@@ -123,6 +131,22 @@ class MarrowSession:
         return specs
 
     def _build_solver(self) -> None:
+        attach_targets = None
+        attach_stiffness = 0.0
+        if self.attach_enabled and self.attach_stiffness > 0.0:
+            # Prepared here rather than in __init__ so the restart path -
+            # refresh_from_object then _build_solver - honours a toggle
+            # flipped since the session was created.
+            import bpy
+
+            from .attach import ensure_weights, sample_targets
+
+            obj = bpy.data.objects.get(self.object_name)
+            if obj is None:
+                raise ValueError(f"object {self.object_name!r} no longer exists")
+            self.attach_idx, self.attach_w = ensure_weights(obj, self.tetmesh)
+            attach_targets = sample_targets(obj, self.attach_idx, self.attach_w)
+            attach_stiffness = self.attach_stiffness
         self.solver = GPUSolver(
             self.tetmesh,
             self.inv_mass,
@@ -134,8 +158,27 @@ class MarrowSession:
             stick_break=self.stick_break,
             self_distance=self.self_distance,
             body_distance=self.body_distance,
+            attach_stiffness=attach_stiffness,
+            attach_targets=attach_targets,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
+
+    def _refresh_targets(self) -> None:
+        """Sample this frame's evaluated shape and hand it to the solver.
+
+        Called once per frame by the group driver, alongside the collider
+        transform resample. Silent no-op when the pass is off.
+        """
+        if self.attach_idx is None or getattr(self.solver, "sh_attach", None) is None:
+            return
+        import bpy
+
+        from .attach import sample_targets
+
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return
+        self.solver.set_targets(sample_targets(obj, self.attach_idx, self.attach_w))
 
     def refresh_from_object(self) -> None:
         """Re-read the panel settings so a restart picks up edited sliders.
@@ -164,6 +207,8 @@ class MarrowSession:
             float(settings.tear_threshold) if settings.tearing_enabled else 0.0
         )
         self.stick_break = float(settings.stick_break)
+        self.attach_enabled = bool(settings.attach_enabled)
+        self.attach_stiffness = float(settings.attach_stiffness)
         # The panel holds a multiple of Resolution; the solver wants metres.
         self.resolution = float(settings.resolution)
         thickness = float(settings.self_thickness) * float(settings.resolution)

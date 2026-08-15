@@ -73,6 +73,10 @@ def _step_group(members, frame: int) -> None:
     for member in members:
         if member.collider_objects:
             member.solver.colliders = member._collider_specs()
+        # Attachment targets are sampled once per frame, like collider
+        # transforms, and held constant across the frame's substeps. A
+        # no-op for members without the pass.
+        member._refresh_targets()
         # Both sides of a contact must open to the same distance.
         member.solver.body_distance = gap
 
@@ -105,7 +109,8 @@ def advance(session, frame: int, frame_start: int):
     """Positions for ``frame``, simulating the group forward when live.
 
     Returns None when the frame cannot be served: before the start, or after
-    a jump too large to catch up with.
+    a jump too large to catch up with - unless nothing has been simulated
+    yet, in which case the jump is caught up from the start instead.
     """
     session._check_live()
     frame, frame_start = int(frame), int(frame_start)
@@ -139,9 +144,17 @@ def advance(session, frame: int, frame_start: int):
 
     last = members[0]._last_simulated
     gap = frame - last
-    if gap <= 0 or gap > session.MAX_CATCHUP:
+    if gap <= 0:
         return None
-
+    if gap > session.MAX_CATCHUP and any(m._cache for m in members):
+        # A long scrub jump into an already-simulated body is not chased:
+        # catching up hundreds of frames inside a frame handler would stall
+        # the UI, and a half-simulated mesh is worse than an untouched one.
+        return None
+    # A large gap with an empty cache is a body that never simulated landing
+    # mid-timeline - a file reopened at frame 88, play pressed there. It used
+    # to sit at rest forever; with no history to protect, catching up from
+    # the start once is exactly what a bake would have done.
     for step_frame in range(last + 1, frame + 1):
         _step_group(members, step_frame)
     return session._cache.get(frame)
@@ -154,6 +167,16 @@ def bake(members, frame_start: int, frame_end: int, scene=None) -> int:
     from wherever a previous bake left the cages.
     """
     members = list(members)
+    samples_scene = any(
+        m.collider_objects
+        or (m.attach_enabled and m.attach_stiffness > 0.0)
+        for m in members
+    )
+    if scene is not None and samples_scene:
+        # Rebuilds sample the current frame - collider transforms and the
+        # attachment start pose - so park the scene at the start frame
+        # first or a bake begun mid-timeline would seed from the wrong pose.
+        scene.frame_set(int(frame_start))
     for member in members:
         member._check_live()
         member._cache.clear()
@@ -162,11 +185,11 @@ def bake(members, frame_start: int, frame_end: int, scene=None) -> int:
         member.live = False
         member.baked = True
 
-    samples_colliders = any(m.collider_objects for m in members)
     for frame in range(int(frame_start), int(frame_end) + 1):
-        if scene is not None and samples_colliders:
-            # Re-sample collider transforms so animated colliders work.
-            # Without this a falling ball would sit still for the whole bake.
+        if scene is not None and samples_scene:
+            # Re-sample collider transforms and attachment targets so
+            # animation works. Without this a falling ball would sit still
+            # for the whole bake.
             scene.frame_set(frame)
         _step_group(members, frame)
 

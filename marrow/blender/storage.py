@@ -14,6 +14,18 @@ COLORS_KEY = "marrow_colors"
 BIND_IDX = "marrow_bind_idx"
 BIND_W = ("marrow_bind_w0", "marrow_bind_w1", "marrow_bind_w2", "marrow_bind_w3")
 REST_KEY = "marrow_rest"
+# Cage-node attachment weights, stored on the CAGE mesh: k nearest render
+# vertex indices and their weights per node.
+ATTACH_IDX = "marrow_attach_idx"
+ATTACH_K = 4
+ATTACH_W = tuple(f"marrow_attach_w{i}" for i in range(ATTACH_K))
+
+
+def _attach_idx_names():
+    """The k index attributes, in column order."""
+    return (ATTACH_IDX,) + tuple(
+        f"{ATTACH_IDX}_{i}" for i in range(1, ATTACH_K)
+    )
 
 
 def write_tetmesh(mesh, tetmesh: TetMesh, colors: np.ndarray) -> None:
@@ -100,7 +112,7 @@ def restore_rest(mesh) -> bool:
 
 def clear_marrow_data(mesh) -> None:
     """Remove every attribute Marrow wrote. Tolerates any being absent."""
-    for name in (REST_KEY, BIND_IDX) + BIND_W:
+    for name in (REST_KEY, BIND_IDX) + BIND_W + _attach_idx_names() + ATTACH_W:
         attr = mesh.attributes.get(name)
         if attr is not None:
             mesh.attributes.remove(attr)
@@ -114,6 +126,57 @@ def read_bind(mesh):
 
     weights = np.empty((n, 4), dtype=np.float64)
     for i, name in enumerate(BIND_W):
+        column = np.empty(n, dtype=np.float32)
+        mesh.attributes[name].data.foreach_get("value", column)
+        weights[:, i] = column
+    return idx, weights
+
+
+def write_attach(mesh, attach_idx: np.ndarray, attach_w: np.ndarray) -> None:
+    """Persist cage-node attachment weights on the cage mesh.
+
+    Indices ride in k INT attributes rather than one, mirroring how bind
+    weights are stored: a POINT attribute holds one value per element.
+    """
+    attach_idx = np.asarray(attach_idx, dtype=np.int32)
+    attach_w = np.asarray(attach_w, dtype=np.float32)
+    if attach_idx.shape[1] != ATTACH_K or attach_w.shape[1] != ATTACH_K:
+        raise ValueError(
+            f"attachment data must have {ATTACH_K} columns, got "
+            f"{attach_idx.shape[1]} and {attach_w.shape[1]}"
+        )
+    _ensure_attr(mesh, ATTACH_IDX, "INT").data.foreach_set(
+        "value", attach_idx[:, 0].tolist()
+    )
+    for i, name in enumerate(_attach_idx_names()[1:], start=1):
+        _ensure_attr(mesh, name, "INT").data.foreach_set(
+            "value", attach_idx[:, i].tolist()
+        )
+    for i, name in enumerate(ATTACH_W):
+        _ensure_attr(mesh, name, "FLOAT").data.foreach_set(
+            "value", attach_w[:, i].tolist()
+        )
+    mesh.update()
+
+
+def read_attach(mesh):
+    """Stored attachment weights as ``(idx, w)``, or None if absent.
+
+    None means "never computed or removed"; the caller synthesizes and
+    writes them back. A partial set (any attribute missing) is treated as
+    absent rather than trusted.
+    """
+    names = _attach_idx_names() + ATTACH_W
+    if any(mesh.attributes.get(name) is None for name in names):
+        return None
+    n = len(mesh.vertices)
+    idx = np.empty((n, ATTACH_K), dtype=np.int32)
+    for i, name in enumerate(names[:ATTACH_K]):
+        column = np.empty(n, dtype=np.int32)
+        mesh.attributes[name].data.foreach_get("value", column)
+        idx[:, i] = column
+    weights = np.empty((n, ATTACH_K), dtype=np.float64)
+    for i, name in enumerate(ATTACH_W):
         column = np.empty(n, dtype=np.float32)
         mesh.attributes[name].data.foreach_get("value", column)
         weights[:, i] = column
