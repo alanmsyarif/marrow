@@ -1,0 +1,9 @@
+# Bytecode. Regenerated on import, and 577 of these were tracked - every test
+# run dirtied the tree with .pyc churn that had nothing to do with the change
+# being reviewed. The vendored .tmp_pytest sources stay tracked; only its
+# bytecode is ignored.
+__pycache__/
+*.py[cod]
+
+# pytest's own scratch dir.
+.pytest_cache/
