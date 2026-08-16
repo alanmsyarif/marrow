@@ -20,6 +20,36 @@ ivec2 texel(int i)
 }}
 """
 
+# Shared by all three contact passes, so the friction algebra exists once and
+# the numpy oracle in core.solver_ref only has to be right about one thing.
+FRICTION_GLSL = """
+// Coulomb friction as a position correction.
+//
+// `push` is the correction the contact just applied, which carries both the
+// normal and the penetration depth - no primitive needs to hand its own
+// normal over, and the SDF gradient does not get computed twice. `slip` is
+// the relative tangential motion to resist, which each pass sources
+// differently: against a collider it is the node's own motion this substep,
+// between nodes it is the difference of the two.
+//
+// The clamp is the whole model. Under mu * depth the entire tangential step
+// is given back and the contact holds, which is static friction; over it the
+// contact slips at a rate mu sets. One coefficient, no second slider that
+// has to be kept consistent with the first.
+vec3 friction_correction(vec3 push, vec3 slip, float mu)
+{
+  float depth = length(push);
+  if (mu <= 0.0 || depth < 1e-9) { return vec3(0.0); }
+  vec3 n = push / depth;
+  vec3 tangent = slip - n * dot(slip, n);
+  float mag = length(tangent);
+  // Straight-on contact has no tangential motion to resist, and dividing by
+  // that zero would poison the node with NaN.
+  if (mag < 1e-9) { return vec3(0.0); }
+  return -tangent * min(1.0, mu * depth / mag);
+}
+"""
+
 
 def build(name, source, images, push_constants, group_size: int = 64):
     """Compile one compute kernel, or raise with the driver log intact."""
@@ -345,7 +375,7 @@ void main()
 }
 """
 
-COLLIDE_SRC = """
+COLLIDE_SRC = FRICTION_GLSL + """
 // One dispatch per collider. Looping colliders inside the kernel would need
 // an array uniform; dispatching per collider reuses the plain push-constant
 // path that is already measured to work, and colliders are few.
@@ -377,7 +407,10 @@ void main()
   vec3 pos = pi.xyz;
 
   if (kind == 0) {
-    if (pos.z < ground_z) { pos.z = ground_z; }
+    if (pos.z < ground_z) {
+      pos.z = ground_z;
+      pos += friction_correction(pos - pi.xyz, pos - imageLoad(x, c).xyz, friction);
+    }
     imageStore(p, c, vec4(pos, pi.w));
     return;
   }
@@ -492,6 +525,17 @@ void main()
   // the surface, so the hold does not drift into the collider over time.
   if (sticky != 0 && inside) {
     imageStore(stick, c, vec4(lp, float(collider_id)));
+  } else if (inside) {
+    // Friction only on a plain contact. A grab is already total, and it
+    // anchors in local space from `lp` - correcting `pos` after that point
+    // would store an anchor that does not match the position beside it.
+    //
+    // ponytail: the collider is treated as still for the substep. Slip is
+    // the node's own motion, not its motion relative to the surface, so a
+    // moving collider does not drag material along by friction. Sticky is
+    // how a moving collider carries material today. Fixing it properly
+    // needs the previous to_world to difference against.
+    pos += friction_correction(pos - pi.xyz, pos - imageLoad(x, c).xyz, friction);
   }
 
   imageStore(p, c, vec4(pos, pi.w));
@@ -506,6 +550,9 @@ COLLIDE_IMAGES = [
     ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
     ("RGBA32F", "FLOAT_2D", "stick", {"READ", "WRITE"}),
     ("R32F", "FLOAT_3D", "sdf", {"READ"}),
+    # Substep-start position, for the tangential motion friction resists.
+    # Appended, so the slots the other three already sit in do not move.
+    ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
 ]
 COLLIDE_PUSH = [
     ("FLOAT", "ground_z"),
@@ -516,10 +563,11 @@ COLLIDE_PUSH = [
     ("INT", "collider_id"),
     ("INT", "sticky"),
     ("FLOAT", "break_dist"),
+    ("FLOAT", "friction"),
 ]
 
 
-SELF_COLLIDE_SRC = """
+SELF_COLLIDE_SRC = FRICTION_GLSL + """
 // Self-collision between surface nodes of the cage. All pairs, Jacobi.
 //
 // No spatial hash. Ten Minute Physics 15 builds one to escape O(n^2) on a
@@ -555,6 +603,14 @@ void main()
   vec3 rest_i = imageLoad(rest_pos, c).xyz;
   vec3 fix = vec3(0.0);
 
+  // Friction resists how the pair slides against each other, never how this
+  // node moves on its own. Two parts of one body travelling together are not
+  // sliding, and braking them would turn friction into drag on any body that
+  // happens to be touching itself.
+  vec3 move_i = pi.xyz - imageLoad(x, c).xyz;
+  vec3 slip = vec3(0.0);
+  float contacts = 0.0;
+
   for (int s = 0; s < n_surf; ++s) {
     if (s == si) { continue; }
     ivec2 cj = texel(int(imageLoad(surf, texel(s)).r));
@@ -578,16 +634,28 @@ void main()
     // this node has to take all of it.
     float share = pi.w / (pi.w + pj.w);
     fix -= d * ((mind - dist) / dist) * share;
+
+    slip += move_i - (pj.xyz - imageLoad(x, cj).xyz);
+    contacts += 1.0;
   }
   // The mark is what scopes the integrate velocity clamp to nodes that are
-  // actually in contact, so free fall keeps its speed.
+  // actually in contact, so free fall keeps its speed. Read off the
+  // depenetration alone, before friction, so its meaning stays "this node
+  // was in contact" rather than "the two corrections did not cancel".
   float hit = dot(fix, fix) > 1e-24 ? 1.0 : 0.0;
+
+  // One friction correction against the mean slip, not one per pair: the
+  // pass is Jacobi and every pair already contributed to a single `fix`, so
+  // the aggregate is the only normal this node actually gets pushed along.
+  if (contacts > 0.0) {
+    fix += friction_correction(fix, slip / contacts, friction);
+  }
   imageStore(mark_out, c, vec4(hit, 0.0, 0.0, 0.0));
   imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
 }
 """
 
-BODY_COLLIDE_SRC = """
+BODY_COLLIDE_SRC = FRICTION_GLSL + """
 // Collision against another Marrow body. One dispatch per other body.
 //
 // The self-collide kernel with two things removed: there is no self to skip,
@@ -613,17 +681,24 @@ void main()
   ivec2 c = texel(i);
   vec4 pi = imageLoad(p, c);
 
-  // Write through, always - see SELF_COLLIDE_SRC on the ping-pong.
+  // Write through, always - see SELF_COLLIDE_SRC on the ping-pong. The mark
+  // needs no write-through of its own: it is one read-write image touched
+  // only at this thread's own texel, so a skipped node keeps what the
+  // self-collision pass left there.
   int si = int(imageLoad(surf_idx, c).r);
   if (si < 0 || !(pi.w > 0.0)) {
     imageStore(out_p, c, pi);
-    imageStore(mark_out, c, vec4(imageLoad(mark_in, c).r, 0.0, 0.0, 0.0));
     return;
   }
 
+  vec3 move_i = pi.xyz - imageLoad(x, c).xyz;
   vec3 fix = vec3(0.0);
+  vec3 slip = vec3(0.0);
+  float contacts = 0.0;
+
   for (int s = 0; s < n_surf_other; ++s) {
-    vec4 pj = imageLoad(x_other, texel(int(imageLoad(surf_other, texel(s)).r)));
+    ivec2 cj = texel(int(imageLoad(surf_other, texel(s)).r));
+    vec4 pj = imageLoad(x_other, cj);
 
     vec3 d = pj.xyz - pi.xyz;
     float d2 = dot(d, d);
@@ -632,10 +707,25 @@ void main()
     float dist = sqrt(d2);
     float share = pi.w / (pi.w + pj.w);
     fix -= d * ((thickness - dist) / dist) * share;
+
+    // The partner's displacement, from its velocity. Its previous position
+    // is not reachable - only x_other, one sample - so friction between two
+    // bodies estimates the far side of the pair where self-collision reads
+    // it exactly. Same one-substep lag the position sampling above already
+    // documents and accepts.
+    //
+    // ponytail: velocity times h, first order. If a shot ever needs better,
+    // the fix is a second position texture per body, not a smarter formula.
+    slip += move_i - imageLoad(v_other, cj).xyz * h;
+    contacts += 1.0;
   }
   // Carry the self-collision mark through and add this pass's own contact.
-  float hit = max(imageLoad(mark_in, c).r, dot(fix, fix) > 1e-24 ? 1.0 : 0.0);
-  imageStore(mark_out, c, vec4(hit, 0.0, 0.0, 0.0));
+  float hit = max(imageLoad(mark, c).r, dot(fix, fix) > 1e-24 ? 1.0 : 0.0);
+
+  if (contacts > 0.0) {
+    fix += friction_correction(fix, slip / contacts, friction);
+  }
+  imageStore(mark, c, vec4(hit, 0.0, 0.0, 0.0));
   imageStore(out_p, c, vec4(pi.xyz + fix, pi.w));
 }
 """

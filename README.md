@@ -72,6 +72,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Stiffness** | Resistance to distortion (deviatoric compliance). |
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
+| **Friction** | Resistance to sliding, for the ground plane, self-collision and body-to-body contact. 0 slides freely. Colliders carry their own value instead. See [Friction](#friction). |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
 | **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
 | **Self Collision** | Stop the body passing through itself where it folds. |
@@ -79,7 +80,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
 | **Attachment** | An armature or other deforming modifiers drive the sim from the inside. See [Attachment](#attachment). |
 | **Attach Stiffness** | How hard the flesh follows the animation. 1.0 rides it exactly; lower lags, jiggles and overshoots. |
-| **Colliders** | The collection of objects this body collides against. Shape and Sticky are set on each object. |
+| **Colliders** | The collection of objects this body collides against. Shape, Sticky and Friction are set on each object. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 | **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
 
@@ -107,6 +108,20 @@ The shape is a unit primitive driven entirely by the picked object's transform, 
 Collider transforms are re-sampled every frame in both live and baked modes, so a falling ball genuinely lands on a jelly rather than sitting still.
 
 An empty collection, or a body sitting in its own collider collection, is skipped rather than treated as an error. Both are just a half-finished edit.
+
+### Friction
+
+Contact resists sliding, not just interpenetration. **Friction** is one coefficient per contact surface: `0` slides freely, around `0.5` grips on a gentle slope, `1` and above holds almost anywhere it can get a grip.
+
+There are two places to set it, and which one applies depends on what the material is touching. Each collider in the list carries its **own** Friction, set on the collider object beside its Shape and Sticky — so a slippery floor and a grippy hand can be in the same scene. Everything with no collider slot of its own — the ground plane, the body against itself, and contact with other Marrow bodies — reads the body's **Friction** slider instead.
+
+One coefficient covers both static and sliding friction. Below the limit the entire sideways step is given back and the material simply holds; above it the contact slips, at a rate the coefficient sets. The limit scales with how hard the contact is pressed, which is what makes it read as weight: the same slider grips harder under a heavy landing than a light touch.
+
+Friction is applied as a position correction inside the contact pass, from the correction that pass already computed — so it needs no separate normal, and no second pass. Both the ground plane and the collider primitives measure it against a collider held still for the substep. Self-collision and body-to-body measure the *pair*, so two parts of one body travelling together are not braked for merely touching.
+
+`0` is the default everywhere and is bit-identical to having no friction at all, so nothing that was authored before this existed moves differently.
+
+**Sticky is not friction.** Friction resists sliding along a surface; Sticky welds material to it and drags it wherever the collider goes. A sticky collider ignores Friction entirely, and the panel greys the value out to say so.
 
 #### Sticky colliders
 
@@ -209,7 +224,7 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 
 - **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Collision against a *collider* is a distance field and does not have this limit.
 - **A deforming collider is baked once**, and features thinner than one SDF cell are missed. See [Colliders](#colliders).
-- **No friction anywhere.** Contact only ever separates, so bodies slide against each other and against themselves freely.
+- **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.

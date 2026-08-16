@@ -79,7 +79,7 @@ def _guard_finite(values: np.ndarray, what: str, total: int) -> np.ndarray:
 class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0, body_distance=0.0,
+                 self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_stiffness=0.0, attach_targets=None, blend_rows=None):
         self.mesh = mesh
         self.params = params
@@ -93,6 +93,10 @@ class GPUSolver:
         # optionally followed by a sticky flag.
         self.colliders = list(colliders or [])
         self.tear_threshold = float(tear_threshold)
+        # Coulomb contact friction for everything without a collider slot of
+        # its own: the ground plane, self-collision and body-to-body. A
+        # collider carries its own value at entry index 5.
+        self.friction = float(friction)
         self.stick_break = float(stick_break)
         self.n_nodes = mesh.n_nodes
 
@@ -192,8 +196,10 @@ class GPUSolver:
                  ("RGBA32F", "FLOAT_2D", "rest_pos", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf_idx", {"READ"}),
-                 ("R32F", "FLOAT_2D", "mark_out", {"WRITE"})],
-                [("FLOAT", "thickness"), ("INT", "n_nodes"), ("INT", "n_surf")],
+                 ("R32F", "FLOAT_2D", "mark_out", {"WRITE"}),
+                 ("RGBA32F", "FLOAT_2D", "x", {"READ"})],
+                [("FLOAT", "thickness"), ("INT", "n_nodes"), ("INT", "n_surf"),
+                 ("FLOAT", "friction")],
             )
 
         if surf is not None and surf.shape[0] > 1 and self.body_distance > 0.0:
@@ -204,10 +210,16 @@ class GPUSolver:
                  ("RGBA32F", "FLOAT_2D", "x_other", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf_other", {"READ"}),
                  ("R32F", "FLOAT_2D", "surf_idx", {"READ"}),
-                 ("R32F", "FLOAT_2D", "mark_in", {"READ"}),
-                 ("R32F", "FLOAT_2D", "mark_out", {"WRITE"})],
+                 # One read-write mark rather than a ping-ponged pair: the
+                 # kernel only ever touches its own texel, and a compute
+                 # shader here gets exactly 8 image units - measured, 9
+                 # fails to compile. Merging them is what pays for v_other.
+                 ("R32F", "FLOAT_2D", "mark", {"READ", "WRITE"}),
+                 ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
+                 ("RGBA32F", "FLOAT_2D", "v_other", {"READ"})],
                 [("FLOAT", "thickness"), ("INT", "n_nodes"),
-                 ("INT", "n_surf_other")],
+                 ("INT", "n_surf_other"), ("FLOAT", "friction"),
+                 ("FLOAT", "h")],
             )
 
         self.sh_predict = kernels.build(
@@ -402,7 +414,7 @@ class GPUSolver:
         self._dispatch_attach(node_groups, h)
         self._dispatch_self_collision(node_groups)
         for other in others:
-            self._dispatch_body_collision(node_groups, other)
+            self._dispatch_body_collision(node_groups, other, h)
         self._dispatch_colliders(node_groups)
 
     def substep_integrate(self, h) -> None:
@@ -504,19 +516,24 @@ class GPUSolver:
         self.sh_self.image("surf", self.tex_surf)
         self.sh_self.image("surf_idx", self.tex_surf_idx)
         self.sh_self.image("mark_out", self.tex_mark2)
+        self.sh_self.image("x", self.tex_x)
         self.sh_self.uniform_float("thickness", self.self_distance)
         self.sh_self.uniform_int("n_nodes", self.n_nodes)
         self.sh_self.uniform_int("n_surf", self.n_surf)
+        self.sh_self.uniform_float("friction", self.friction)
         gpu.compute.dispatch(self.sh_self, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
         self.tex_mark, self.tex_mark2 = self.tex_mark2, self.tex_mark
 
-    def _dispatch_body_collision(self, node_groups, other) -> None:
+    def _dispatch_body_collision(self, node_groups, other, h) -> None:
         """Push this body's surface nodes out of ``other``.
 
         Only this body's texels are written, so the two solvers of a pair can
         run this against each other with no shared mutable state. The other
         half of the correction is applied when ``other`` runs its own pass.
+
+        ``h`` is here only for friction, which turns the partner's velocity
+        into the displacement it made this substep.
         """
         if self.sh_body is None or getattr(other, "n_surf", 0) < 1:
             return
@@ -526,14 +543,17 @@ class GPUSolver:
         self.sh_body.image("x_other", other.tex_x)
         self.sh_body.image("surf_other", other.tex_surf)
         self.sh_body.image("surf_idx", self.tex_surf_idx)
-        self.sh_body.image("mark_in", self.tex_mark)
-        self.sh_body.image("mark_out", self.tex_mark2)
+        self.sh_body.image("mark", self.tex_mark)
+        self.sh_body.image("x", self.tex_x)
+        self.sh_body.image("v_other", other.tex_v)
         self.sh_body.uniform_float("thickness", self.body_distance)
         self.sh_body.uniform_int("n_nodes", self.n_nodes)
         self.sh_body.uniform_int("n_surf_other", other.n_surf)
+        self.sh_body.uniform_float("friction", self.friction)
+        self.sh_body.uniform_float("h", h)
         gpu.compute.dispatch(self.sh_body, node_groups, 1, 1)
         self.tex_p, self.tex_p2 = self.tex_p2, self.tex_p
-        self.tex_mark, self.tex_mark2 = self.tex_mark2, self.tex_mark
+        # The mark is corrected in place now, so only the positions swap.
 
     def _sdf_for(self, field):
         """The 3D texture for a baked field, uploaded once and kept."""
@@ -560,31 +580,36 @@ class GPUSolver:
         if self.ground_on:
             # The ground never sticks, and it runs first so that a sticky
             # collider's anchor wins over it rather than the other way round.
-            jobs.append((0, identity, identity, False, 0, None))
+            # It has no slot to carry a friction value, so it takes the
+            # body's - the same one self-collision and body-body use.
+            jobs.append((0, identity, identity, False, 0, None, self.friction))
         for index, entry in enumerate(self.colliders, start=1):
             kind, to_local, to_world = entry[:3]
             sticky = bool(entry[3]) if len(entry) > 3 else False
             field = entry[4] if len(entry) > 4 else None
+            friction = float(entry[5]) if len(entry) > 5 else 0.0
             # The id is the slot position, not the loop counter, so it stays
             # the same frame to frame - an anchor recorded last substep has to
             # still name the same collider this one.
-            jobs.append((kind, to_local, to_world, sticky, index, field))
+            jobs.append((kind, to_local, to_world, sticky, index, field, friction))
 
         # Zero means "off" in the panel, but the kernel wants a distance it can
         # compare against, so an unbreakable hold is a distance nothing reaches.
         break_dist = self.stick_break if self.stick_break > 0.0 else 1.0e30
 
-        for kind, to_local, to_world, sticky, collider_id, field in jobs:
+        for kind, to_local, to_world, sticky, collider_id, field, friction in jobs:
             self.sh_collide.bind()
             self.sh_collide.image("p", self.tex_p)
             self.sh_collide.image("stick", self.tex_stick)
             self.sh_collide.image("sdf", self._sdf_for(field))
+            self.sh_collide.image("x", self.tex_x)
             self.sh_collide.uniform_float("ground_z", self.ground_z)
             self.sh_collide.uniform_int("kind", int(kind))
             self.sh_collide.uniform_int("n_nodes", self.n_nodes)
             self.sh_collide.uniform_int("collider_id", int(collider_id))
             self.sh_collide.uniform_int("sticky", 1 if sticky else 0)
             self.sh_collide.uniform_float("break_dist", break_dist)
+            self.sh_collide.uniform_float("friction", friction)
             # Must be a mathutils Matrix. A flat 16-float list is accepted
             # without error and silently applies the wrong transform.
             self.sh_collide.uniform_float("to_local", to_local)

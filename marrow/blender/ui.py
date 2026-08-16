@@ -63,6 +63,19 @@ class MarrowColliderSettings(bpy.types.PropertyGroup):
         ),
         default=False,
     )
+    friction: bpy.props.FloatProperty(
+        name="Friction",
+        description=(
+            "Resistance to sliding along this collider. 0 slides freely, "
+            "around 0.5 grips on a gentle slope, 1 and above holds almost "
+            "anywhere it can reach. Ignored while Sticky is on, which "
+            "already holds the material outright"
+        ),
+        default=0.0,
+        min=0.0,
+        max=5.0,
+        soft_max=1.0,
+    )
 
 
 class MARROW_UL_colliders(bpy.types.UIList):
@@ -229,6 +242,19 @@ class MarrowSettings(bpy.types.PropertyGroup):
         ),
         default=False,
     )
+    friction: bpy.props.FloatProperty(
+        name="Friction",
+        description=(
+            "Resistance to sliding for contact that has no collider slot of "
+            "its own: the ground plane, self-collision and contact with "
+            "other Marrow bodies. 0 slides freely. Each collider in the list "
+            "carries its own value instead"
+        ),
+        default=0.0,
+        min=0.0,
+        max=5.0,
+        soft_max=1.0,
+    )
     self_thickness: bpy.props.FloatProperty(
         name="Thickness",
         description=(
@@ -333,6 +359,10 @@ class MARROW_PT_panel(bpy.types.Panel):
         sim.prop(settings, "stiffness")
         sim.prop(settings, "volume_preservation")
         sim.prop(settings, "damping")
+        # A material property of the body, so it sits with stiffness and
+        # damping rather than in any one contact box - it is the value the
+        # ground, self-collision and body-to-body all read.
+        sim.prop(settings, "friction")
 
         ground = sim.box()
         ground.prop(settings, "ground_enabled")
@@ -381,6 +411,20 @@ class MARROW_PT_panel(bpy.types.Panel):
         col = row.column(align=True)
         col.operator("marrow.collider_add", icon="ADD", text="")
         col.operator("marrow.collider_remove", icon="REMOVE", text="")
+
+        # Friction is per collider, so it follows the list selection. Sticky
+        # already holds the material outright, so the row greys out rather
+        # than offering a value the solver will ignore.
+        active = None
+        if collection is not None:
+            objects = list(collection.all_objects)
+            if 0 <= settings.active_collider < len(objects):
+                active = objects[settings.active_collider]
+        if active is not None:
+            row = box.row()
+            row.enabled = not active.marrow_collider.sticky
+            row.prop(active.marrow_collider, "friction")
+
         row = box.row()
         row.enabled = collection is not None and any(
             ob.marrow_collider.sticky for ob in collection.all_objects

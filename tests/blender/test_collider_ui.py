@@ -88,12 +88,13 @@ def test_a_collider_in_the_collection_reaches_the_solver():
     bpy.context.view_layer.objects.active = obj
     bpy.ops.marrow.collider_add()
 
-    assert collider_objects_of(obj) == [(ball, "SPHERE", False)]
+    assert collider_objects_of(obj) == [(ball, "SPHERE", False, 0.0)]
     session = MarrowSession(obj)
     session.refresh_from_object()
     session._build_solver()
     assert len(session.solver.colliders) == 1
-    kind, _to_local, _to_world, sticky, _field = session.solver.colliders[0]
+    (kind, _to_local, _to_world,
+     sticky, _field, _friction) = session.solver.colliders[0]
     assert sticky is False, "a collider is not sticky until the object says so"
     assert kind == 1, "SPHERE must reach the kernel as kind 1"
 
@@ -108,7 +109,7 @@ def test_an_empty_works_as_a_collider():
 
     bpy.context.view_layer.objects.active = obj
     bpy.ops.marrow.collider_add()
-    assert collider_objects_of(obj) == [(empty, "BOX", False)]
+    assert collider_objects_of(obj) == [(empty, "BOX", False, 0.0)]
 
 
 def test_an_empty_collection_is_skipped_not_an_error():
@@ -142,7 +143,7 @@ def test_a_nested_collection_counts_as_colliders():
     outer.children.link(inner)
     obj.marrow.collider_collection = outer
 
-    assert collider_objects_of(obj) == [(ball, "MESH", False)], (
+    assert collider_objects_of(obj) == [(ball, "MESH", False, 0.0)], (
         "objects in a nested collection must collide too"
     )
 
@@ -165,7 +166,7 @@ def test_old_collider_slots_migrate_to_a_collection():
     assert ball.name in obj.marrow.collider_collection.objects
     assert ball.marrow_collider.shape == "SPHERE"
     assert ball.marrow_collider.sticky is True
-    assert collider_objects_of(obj) == [(ball, "SPHERE", True)]
+    assert collider_objects_of(obj) == [(ball, "SPHERE", True, 0.0)]
 
 
 def test_a_collider_actually_stops_the_body():

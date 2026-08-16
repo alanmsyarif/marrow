@@ -30,7 +30,7 @@ class MarrowSession:
 
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
                  collider_objects=None, tear_threshold=0.0, stick_break=0.0,
-                 self_distance=0.0, body_distance=0.0,
+                 self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_enabled=False, attach_stiffness=0.0):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
@@ -44,6 +44,9 @@ class MarrowSession:
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
         self.body_distance = float(body_distance)
+        # Contact friction for the ground, self-collision and body-to-body.
+        # A collider slot carries its own, read in _collider_specs.
+        self.friction = float(friction)
         # Attachment feeds the object's animation into the sim as targets.
         # Weights and the first target set are built in _build_solver, so a
         # restart (which re-reads the panel and rebuilds) picks up toggles.
@@ -94,7 +97,7 @@ class MarrowSession:
         self._build_solver()
 
     def _collider_specs(self):
-        """(kind, to_local, to_world, sticky, field) at the current frame.
+        """(kind, to_local, to_world, sticky, field, friction) at this frame.
 
         Primitives are unit-sized in local space, so the object transform is
         the whole description - position, orientation and size all come from
@@ -114,8 +117,9 @@ class MarrowSession:
             if isinstance(entry, tuple):
                 collider, shape = entry[0], entry[1]
                 sticky = bool(entry[2]) if len(entry) > 2 else False
+                mu = float(entry[3]) if len(entry) > 3 else 0.0
             else:
-                collider, shape, sticky = entry, "SPHERE", False
+                collider, shape, sticky, mu = entry, "SPHERE", False, 0.0
             if collider is None:
                 continue
             world = collider.matrix_world.copy()
@@ -129,12 +133,12 @@ class MarrowSession:
                 grid_m = Matrix([list(row) for row in grid])
                 specs.append(
                     (3, grid_m @ world.inverted(), world @ grid_m.inverted(),
-                     sticky, field)
+                     sticky, field, mu)
                 )
                 continue
 
             kind = 1 if shape == "SPHERE" else 2
-            specs.append((kind, world.inverted(), world, sticky, None))
+            specs.append((kind, world.inverted(), world, sticky, None, mu))
         return specs
 
     def _build_solver(self) -> None:
@@ -165,6 +169,7 @@ class MarrowSession:
             stick_break=self.stick_break,
             self_distance=self.self_distance,
             body_distance=self.body_distance,
+            friction=self.friction,
             attach_stiffness=attach_stiffness,
             attach_targets=attach_targets,
             blend_rows=self.blend_rows,
@@ -215,6 +220,7 @@ class MarrowSession:
             float(settings.tear_threshold) if settings.tearing_enabled else 0.0
         )
         self.stick_break = float(settings.stick_break)
+        self.friction = float(settings.friction)
         self.attach_enabled = bool(settings.attach_enabled)
         self.attach_stiffness = float(settings.attach_stiffness)
         # The panel holds a multiple of Resolution; the solver wants metres.

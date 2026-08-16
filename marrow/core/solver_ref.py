@@ -247,3 +247,49 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
                 state, idx, grads, c_hyd,
                 1.0 / (params.lam * abs(rest_vol[t])), h, lam_hyd[t],
             )
+
+
+def solve_plane_contact(state, ground_z: float, friction: float) -> None:
+    """Depenetrate a ground plane, with Coulomb friction, in place.
+
+    The oracle for the friction in the GLSL contact kernels. All three of
+    them compute the same thing from the same two quantities - the
+    correction the contact itself applied, which gives both the normal and
+    the penetration depth, and how far the node has moved since the substep
+    began. Only where those come from differs, so this plane case pins the
+    algebra for all of them.
+
+    Friction is a position correction, not a velocity one: the tangential
+    motion of this substep is given back, up to ``friction`` times the
+    penetration depth. Under that clamp the whole tangential step is
+    cancelled and the node holds, which is static friction; over it the
+    contact slips at a rate the coefficient sets. One coefficient covers
+    both, so there is no second slider that has to stay consistent with the
+    first. ``friction`` of 0 leaves the trajectory bit identical to plain
+    non-penetration.
+    """
+    p = state.predicted
+    hit = (state.inv_mass > 0.0) & (p[:, 2] < ground_z)
+    idx = np.flatnonzero(hit)
+    if idx.size == 0:
+        return
+
+    depth = ground_z - p[idx, 2]
+    p[idx, 2] = ground_z
+    if friction <= 0.0:
+        return
+
+    # The normal is +z, so the tangent plane is xy and dropping the z
+    # component is the whole projection.
+    slide = p[idx] - state.nodes[idx]
+    slide[:, 2] = 0.0
+    mag = np.linalg.norm(slide, axis=1)
+
+    # A node that only fell has no tangential motion to resist, and dividing
+    # by that zero would poison it with NaN.
+    live = mag > 1e-9
+    if not np.any(live):
+        return
+    moving = idx[live]
+    scale = np.minimum(1.0, friction * depth[live] / mag[live])
+    p[moving] -= slide[live] * scale[:, None]

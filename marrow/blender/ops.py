@@ -218,7 +218,8 @@ def collider_objects_of(obj):
     if collection is None:
         return []
     return [
-        (ob, ob.marrow_collider.shape, ob.marrow_collider.sticky)
+        (ob, ob.marrow_collider.shape, ob.marrow_collider.sticky,
+         ob.marrow_collider.friction)
         for ob in collection.all_objects
         if ob is not obj
     ]
@@ -282,6 +283,7 @@ def session_for(obj) -> MarrowSession:
         stick_break=float(settings.stick_break),
         self_distance=thickness if settings.self_collision else 0.0,
         body_distance=thickness if settings.body_collision else 0.0,
+        friction=float(settings.friction),
         attach_enabled=bool(settings.attach_enabled),
         attach_stiffness=float(settings.attach_stiffness),
     )
