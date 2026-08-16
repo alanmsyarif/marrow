@@ -125,6 +125,38 @@ def solve_attachment(state, targets, compliance: float, h: float) -> None:
     )
 
 
+def blend_project(state, rows, weights) -> None:
+    """Project the hanging-node interpolation constraints, in place.
+
+    ``rows`` is (R, 5) of [hanging, m0..m3] and ``weights`` the (R, 4) master
+    weights, summing to one; zero-weight slots are padding. One Gauss-Seidel
+    sweep in row order over C = x_h - sum w_i x_m with compliance zero - the
+    CPU mirror of the GPU blend pass, so a sign error there is detectable.
+    """
+    rows = np.asarray(rows, dtype=np.int64)
+    weights = np.asarray(weights, dtype=np.float64)
+    p = state.predicted
+    for r in range(rows.shape[0]):
+        h = int(rows[r, 0])
+        masters = rows[r, 1:]
+        w = weights[r]
+
+        xm = np.zeros(3, dtype=np.float64)
+        denom = float(state.inv_mass[h])
+        for i in range(4):
+            if w[i] > 0.0:
+                xm += w[i] * p[masters[i]]
+                denom += float(state.inv_mass[masters[i]]) * w[i] * w[i]
+        if denom < 1e-20:
+            continue
+        dlambda = -(p[h] - xm) / denom
+        if state.inv_mass[h] > 0.0:
+            p[h] += state.inv_mass[h] * dlambda
+        for i in range(4):
+            if w[i] > 0.0 and state.inv_mass[masters[i]] > 0.0:
+                p[masters[i]] -= state.inv_mass[masters[i]] * (w[i] * dlambda)
+
+
 def _grads_from_dcdf(dcdf: np.ndarray, dm_inv: np.ndarray) -> np.ndarray:
     """Map a gradient in F to per-node gradients. Returns (4, 3)."""
     g123 = dcdf @ dm_inv.T          # (3, 3), columns are nodes 1, 2, 3

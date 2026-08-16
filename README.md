@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.9.3.zip
+blender --command extension install-file -r user_default --enable dist/marrow-0.10.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -41,6 +41,12 @@ Note that **Free Bake is not this**. Free Bake discards the cache and the GPU me
 
 Editing the mesh's topology between the two invalidates the stored shape, since the attribute is per-point. Re-tetrahedralize after any Edit Mode change.
 
+### Adaptive cages
+
+Uniform cages resolve the thinnest feature they must capture and pay for it everywhere: a walking character whose ankles need 0.03 cells pays 0.03 through the whole torso, roughly (0.25/0.03)³ ≈ 580x the nodes. **Adaptive**, in the Cage box, replaces the uniform grid with an octree that refines towards the surface - **Resolution** stays the coarse bulk cell size, **Min Size** is how small cells get. One rule gives three behaviours: a boundary layer at Min Size everywhere on the surface, thin features filled at Min Size so they keep at least two cells across, and deep interior left at Resolution. Where fine cells meet coarser ones, the extra face nodes are glued to the coarse face by bilinear interpolation, so the cage bends as one piece.
+
+The trade is the boundary layer: every surface cell sits at Min Size, so an adaptive cage is only cheap where the shape has genuine bulk to leave coarse, and building one takes longer than the uniform fill it replaces. On a chunky cantilever test shape the adaptive cage deflects like the uniform-at-Min-Size one to within 15% at over 4x fewer nodes. Adaptive and uniform cages behave identically once built - same solver, same settings - and Adaptive off stays bit-identical to the old uniform path.
+
 ### Live or Bake
 
 | | |
@@ -60,6 +66,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | Setting | What it does |
 |---|---|
 | **Resolution** | Cage cell size in world units. Smaller fills finer detail and costs more. |
+| **Adaptive** | Follow the surface instead of filling uniformly. See [Adaptive cages](#adaptive-cages). |
+| **Min Size** | Smallest adaptive cell; thin features fill at this size. Only active with Adaptive. |
 | **Substeps** | XPBD substeps per frame. More is stabler and slower, and this is the most expensive knob here. |
 | **Stiffness** | Resistance to distortion (deviatoric compliance). |
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
@@ -188,10 +196,10 @@ While stretch display is active a generated emission material sits in slot 0; ch
 | Tet data | Mesh vertices, ID properties and POINT attributes, surviving save and load |
 | Rest shape | A `marrow_rest` POINT attribute, so De-tetrahedralize can undo the whole thing |
 | Pack to textures | CPU to `GPUTexture`, once per simulation start |
-| Solve | GLSL compute, 6 kernels x substeps x constraint colours |
+| Solve | GLSL compute, 6 kernels x substeps x constraint colours, plus a hanging-node blend pass between the elastic solve and attachment on adaptive cages |
 | Skin and readback | GPU blend, then only the render vertices cross PCIe |
 
-The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so thin models need a finer Resolution.
+The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so thin models need a finer Resolution - or [Adaptive](#adaptive-cages), which puts the fine cells only where the shape is thin.
 
 Tets are graph-coloured at build time so each colour dispatches race-free with no atomics. Interior cage nodes never cross PCIe; only render vertices are read back.
 
@@ -225,7 +233,7 @@ Core geometry and solver maths live in `marrow/core/` and never import `bpy`, wh
 blender -b --factory-startup --python tests/blender/run_tests.py
 ```
 
-**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 202 tests and they all pass on 5.2.
+**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 208 tests and they all pass on 5.2.
 
 Running a single module rather than `run_tests.py` needs a `gpu.init()` of your own first: 5.2 requires it, and several modules rely on some earlier module in the full run having already called it.
 

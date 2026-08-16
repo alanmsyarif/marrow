@@ -24,10 +24,11 @@ already had to move. step() touches PCIe not at all.
 import gpu
 import numpy as np
 
-from ..core.coloring import color_tets
+from ..core.coloring import color_sets, color_tets
 from ..core.layout import (
     color_order,
     color_ordered,
+    pack_blend,
     pack_nodes,
     pack_rest,
     pack_scalar,
@@ -79,7 +80,7 @@ class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0,
-                 attach_stiffness=0.0, attach_targets=None):
+                 attach_stiffness=0.0, attach_targets=None, blend_rows=None):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -243,6 +244,42 @@ class GPUSolver:
                 "attach", kernels.ATTACH_SRC,
                 kernels.ATTACH_IMAGES, kernels.ATTACH_PUSH,
             )
+        # Hanging-node glue rows from an adaptive lattice. Coloured
+        # node-disjoint like the tets and dispatched one colour at a time;
+        # a uniform body has no rows and allocates nothing for the pass.
+        self.sh_blend = None
+        self.blend_offsets = None
+        if blend_rows is not None:
+            blend_idx = np.asarray(blend_rows[0], dtype=np.int32)
+            blend_w = np.asarray(blend_rows[1], dtype=np.float64)
+            n_blend = int(blend_idx.shape[0])
+            if n_blend > 0:
+                # A zero-weight slot is never moved by the kernel, so it
+                # must not create colour conflicts either.
+                color_rows = [
+                    [int(blend_idx[r, 0])]
+                    + [int(blend_idx[r, 1 + s]) if blend_w[r, s] > 0.0 else -1
+                       for s in range(4)]
+                    for r in range(n_blend)
+                ]
+                row_colors = color_sets(color_rows, self.n_nodes)
+                # Stable sort: within a colour the rows keep their
+                # master-level order, so the sweep reads fresh master
+                # values down the hanging chains.
+                order = color_order(row_colors)
+                counts = np.bincount(
+                    row_colors, minlength=int(row_colors.max()) + 1
+                )
+                self.blend_offsets = np.concatenate(
+                    [[0], np.cumsum(counts)]
+                ).astype(np.int32)
+                self.tex_blend = upload_verified(
+                    pack_blend(blend_idx[order], blend_w[order])
+                )
+                self.sh_blend = kernels.build(
+                    "blend", kernels.BLEND_SRC,
+                    kernels.BLEND_IMAGES, kernels.BLEND_PUSH,
+                )
         # Mesh collider fields, keyed by id() of the baked array. The array is
         # kept in the value so it cannot be collected and have its id reused.
         # Rebuilt specs hand back the same cached array every frame, so an
@@ -361,6 +398,7 @@ class GPUSolver:
             self.sh_solve.uniform_int("color_end", end)
             gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
+        self._dispatch_blend()
         self._dispatch_attach(node_groups, h)
         self._dispatch_self_collision(node_groups)
         for other in others:
@@ -386,6 +424,27 @@ class GPUSolver:
         max_vel = 0.2 * thickness / h if thickness > 0.0 else 0.0
         self.sh_integrate.uniform_float("max_vel", max_vel)
         gpu.compute.dispatch(self.sh_integrate, node_groups, 1, 1)
+
+    def _dispatch_blend(self) -> None:
+        """Project the hanging-node glue rows, colour by colour.
+
+        Runs right after the elastic solve: the blend constraints are part
+        of the material's integrity, so attach and every contact pass see
+        the glued state, and the glue gets the corrected positions rather
+        than the raw prediction. Absent rows cost nothing - no dispatch.
+        """
+        if self.sh_blend is None:
+            return
+        for c in range(len(self.blend_offsets) - 1):
+            begin, end = int(self.blend_offsets[c]), int(self.blend_offsets[c + 1])
+            if end <= begin:
+                continue
+            self.sh_blend.bind()
+            self.sh_blend.image("p", self.tex_p)
+            self.sh_blend.image("blend", self.tex_blend)
+            self.sh_blend.uniform_int("color_begin", begin)
+            self.sh_blend.uniform_int("color_end", end)
+            gpu.compute.dispatch(self.sh_blend, _groups(end - begin), 1, 1)
 
     def _dispatch_attach(self, node_groups, h) -> None:
         """Pull free nodes towards this frame's animation targets.

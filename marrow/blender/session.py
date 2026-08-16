@@ -14,7 +14,7 @@ limit.
 import numpy as np
 from mathutils import Matrix
 
-from ..blender.storage import TETS_KEY, read_bind, read_tetmesh
+from ..blender.storage import TETS_KEY, read_bind, read_blend, read_tetmesh
 from ..core.solver_ref import SolverParams
 from ..gpu.solver import GPUSolver, MarrowNaNError
 
@@ -81,6 +81,9 @@ class MarrowSession:
             )
 
         self.tetmesh = tetmesh
+        # None on a uniform cage - the solver then allocates nothing for the
+        # blend pass and stays bit-identical to before adaptive existed.
+        self.blend_rows = read_blend(cage_obj.data)
         self.bind_idx, self.bind_w = read_bind(obj.data)
         # Pinning is not exposed yet; every node is free.
         self.inv_mass = np.ones(tetmesh.n_nodes, dtype=np.float64)
@@ -160,6 +163,7 @@ class MarrowSession:
             body_distance=self.body_distance,
             attach_stiffness=attach_stiffness,
             attach_targets=attach_targets,
+            blend_rows=self.blend_rows,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 

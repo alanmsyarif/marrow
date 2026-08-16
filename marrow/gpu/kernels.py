@@ -251,6 +251,69 @@ void main()
 }
 """
 
+BLEND_SRC = """
+// Hanging-node glue from the adaptive lattice. One row per hanging node:
+// C = x_h - sum w_i x_mi, projected with zero compliance. The rows are
+// coloured node-disjoint on the CPU (see GPUSolver), so a dispatch reads
+// and writes p in place with no races, exactly like the solve pass.
+//
+// Row packing, two texels per row: 2r = (h, m0, m1, m2),
+// 2r+1 = (m3, w0, w1, w2); w3 is recovered as 1 - w0 - w1 - w2. Edge
+// midpoint rows carry masters (a, b, a, b) with weights (0.5, 0.5, 0, 0);
+// a zero-weight slot is padding and is never read or written.
+//
+// Transcribed from marrow.core.solver_ref.blend_project; the two must stay
+// in step. A pinned hanging node still projects: its own share is zero but
+// its masters are dragged towards it, which is what "glued" must mean when
+// the glue point is held.
+
+void main()
+{
+  int r = color_begin + int(gl_GlobalInvocationID.x);
+  if (r >= color_end) { return; }
+
+  vec4 t0 = imageLoad(blend, texel(2 * r));
+  vec4 t1 = imageLoad(blend, texel(2 * r + 1));
+  int hi = int(t0.r);
+  int m0 = int(t0.g);
+  int m1 = int(t0.b);
+  int m2 = int(t0.a);
+  int m3 = int(t1.r);
+  float w0 = t1.g;
+  float w1 = t1.b;
+  float w2 = t1.a;
+  float w3 = 1.0 - w0 - w1 - w2;
+
+  vec4 hx = imageLoad(p, texel(hi));
+  vec3 xm = vec3(0.0);
+  float denom = hx.w;
+  if (w0 > 0.0) { vec4 q = imageLoad(p, texel(m0)); xm += q.xyz * w0; denom += q.w * w0 * w0; }
+  if (w1 > 0.0) { vec4 q = imageLoad(p, texel(m1)); xm += q.xyz * w1; denom += q.w * w1 * w1; }
+  if (w2 > 0.0) { vec4 q = imageLoad(p, texel(m2)); xm += q.xyz * w2; denom += q.w * w2 * w2; }
+  if (w3 > 0.0) { vec4 q = imageLoad(p, texel(m3)); xm += q.xyz * w3; denom += q.w * w3 * w3; }
+  if (denom < 1e-20) { return; }
+
+  // dlambda = -C / denom along each gradient. corr is -dlambda, so the
+  // hanging node subtracts its share and the masters add theirs.
+  vec3 corr = (hx.xyz - xm) / denom;
+  imageStore(p, texel(hi), vec4(hx.xyz - hx.w * corr, hx.w));
+  if (w0 > 0.0) { vec4 q = imageLoad(p, texel(m0)); imageStore(p, texel(m0), vec4(q.xyz + q.w * w0 * corr, q.w)); }
+  if (w1 > 0.0) { vec4 q = imageLoad(p, texel(m1)); imageStore(p, texel(m1), vec4(q.xyz + q.w * w1 * corr, q.w)); }
+  if (w2 > 0.0) { vec4 q = imageLoad(p, texel(m2)); imageStore(p, texel(m2), vec4(q.xyz + q.w * w2 * corr, q.w)); }
+  if (w3 > 0.0) { vec4 q = imageLoad(p, texel(m3)); imageStore(p, texel(m3), vec4(q.xyz + q.w * w3 * corr, q.w)); }
+}
+"""
+
+BLEND_IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "blend", {"READ"}),
+]
+BLEND_PUSH = [
+    ("INT", "color_begin"),
+    ("INT", "color_end"),
+]
+
+
 INTEGRATE_SRC = """
 void main()
 {

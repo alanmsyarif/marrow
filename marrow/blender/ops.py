@@ -4,7 +4,7 @@ import bpy
 import numpy as np
 
 from ..blender import false_color, group, handlers
-from ..blender.inside_bvh import cell_mask_from_object
+from ..blender.inside_bvh import cell_mask_from_object, cell_oracle_from_object
 from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
 from ..blender.storage import (
     BIND_IDX,
@@ -12,9 +12,11 @@ from ..blender.storage import (
     clear_marrow_data,
     restore_rest,
     write_bind,
+    write_blend,
     write_rest,
     write_tetmesh,
 )
+from ..core.adaptive import build_adaptive_lattice
 from ..core.bind import bind_points
 from ..core.coloring import color_tets
 from ..core.lattice import build_lattice
@@ -56,16 +58,33 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
             m.show_viewport = False
         try:
             bpy.context.view_layer.update()
-            mask, bounds_min = cell_mask_from_object(obj, spacing)
-            if not mask.any():
-                self.report(
-                    {"ERROR"},
-                    "No cells inside the mesh. Lower Resolution in the Marrow panel "
-                    "until the cage fills the object.",
+            blend_rows = None
+            if obj.marrow.adaptive:
+                # The octree follows the surface: boundary layer and thin
+                # features at Min Size, bulk at Resolution.
+                bounds_min, oracle = cell_oracle_from_object(obj)
+                tetmesh, blend_idx, blend_w = build_adaptive_lattice(
+                    spacing, float(obj.marrow.min_resolution), oracle
                 )
-                return {"CANCELLED"}
+                if tetmesh.n_nodes == 0:
+                    self.report(
+                        {"ERROR"},
+                        "No cells inside the mesh. Lower Resolution in the "
+                        "Marrow panel until the cage fills the object.",
+                    )
+                    return {"CANCELLED"}
+                blend_rows = (blend_idx, blend_w)
+            else:
+                mask, bounds_min = cell_mask_from_object(obj, spacing)
+                if not mask.any():
+                    self.report(
+                        {"ERROR"},
+                        "No cells inside the mesh. Lower Resolution in the Marrow panel "
+                        "until the cage fills the object.",
+                    )
+                    return {"CANCELLED"}
 
-            tetmesh = build_lattice(bounds_min, spacing, mask)
+                tetmesh = build_lattice(bounds_min, spacing, mask)
             try:
                 tetmesh.validate()
             except ValueError as exc:
@@ -94,6 +113,8 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
 
         cage_mesh = bpy.data.meshes.new(cage_name)
         write_tetmesh(cage_mesh, tetmesh, colors)
+        if blend_rows is not None:
+            write_blend(cage_mesh, *blend_rows)
         cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
         context.collection.objects.link(cage_obj)
         cage_obj.parent = obj
@@ -114,11 +135,13 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
         if obj.marrow.live_enabled:
             handlers.register_handler()
 
-        self.report(
-            {"INFO"},
+        message = (
             f"Marrow: {tetmesh.n_tets} tets, {tetmesh.n_nodes} nodes, "
-            f"{int(colors.max()) + 1 if colors.size else 0} colours",
+            f"{int(colors.max()) + 1 if colors.size else 0} colours"
         )
+        if blend_rows is not None:
+            message += f", {blend_rows[0].shape[0]} blend rows"
+        self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
