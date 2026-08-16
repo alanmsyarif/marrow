@@ -22,6 +22,33 @@ def repair_orientation(tets: np.ndarray, nodes: np.ndarray) -> np.ndarray:
     return fixed
 
 
+# Mass is material, not per-node: every node carries the volume of material
+# it represents, at one fixed density, so the total mass is a property of the
+# object alone. A finer Resolution then changes the detail and the cost, not
+# the weight - uniform-mass nodes made a 0.1 cage of a unit sphere eleven
+# times heavier than its 0.25 one, and it sagged accordingly. 64 mass units
+# per cubic metre keeps an average interior node at the panel-default cell
+# size (0.25) at 1 mass unit, the weight older versions gave every node.
+MASS_DENSITY = 64.0
+
+
+def node_volumes(nodes: np.ndarray, tets: np.ndarray) -> np.ndarray:
+    """Lumped material volume per node.
+
+    Every tet spreads a quarter of its volume to each corner, so the node
+    volumes sum to the lattice volume. In the 5-tet lattice split an
+    interior node owns between a third and five thirds of a cell depending
+    on the parity of the cells around it, one cell on average. Adaptive
+    cages get the same rule: a fine boundary node owns a fine cell's share
+    and no longer weighs as much as a coarse interior one.
+    """
+    vol = np.abs(signed_volumes(np.asarray(nodes, dtype=np.float64), np.asarray(tets)))
+    out = np.zeros(len(nodes), dtype=np.float64)
+    for corner in range(4):
+        np.add.at(out, np.asarray(tets)[:, corner], vol * 0.25)
+    return out
+
+
 _TET_FACES = np.array([[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]], dtype=np.intp)
 
 

@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-0.10.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.0.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -82,6 +82,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Colliders** | The collection of objects this body collides against. Shape and Sticky are set on each object. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 | **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
+
+**Mass is a property of the object, not of the cage.** Each node carries the volume of material it represents at a fixed density (64 mass units per cubic metre), so an object weighs the same however finely it is tetrahedralized, and Stiffness and Volume Preservation keep their meaning across a Resolution change. The density is chosen so the average node at the default Resolution of 0.25 weighs the 1 mass unit older versions gave every node. A very fine cage can still read a touch firmer at the same Substeps — a fixed iteration budget converges more constraints less — so raise Substeps if a resolution change needs to match to the last percent.
 
 ### Colliders
 
@@ -210,7 +212,6 @@ Tets are graph-coloured at build time so each colour dispatches race-free with n
 - **No friction anywhere.** Contact only ever separates, so bodies slide against each other and against themselves freely.
 - **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
-- **Resolution changes the physics, not just the detail.** Every cage node carries the same mass regardless of cell size, so a finer cage makes the same object heavier while Stiffness stays put, and it sags further. Going from 0.25 to 0.1 on a unit sphere takes it from 461 to 5,104 mass units. Expect to re-tune Stiffness and Volume Preservation after a Resolution change rather than treating them as absolute.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
 - **No plasticity, anisotropy or per-region materials.**
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.

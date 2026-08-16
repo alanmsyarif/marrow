@@ -47,6 +47,24 @@ def _drop_and_squash(obj, frames=16):
         scene.frame_set(frame)
 
 
+def _max_deviation(obj, frames=16):
+    """Largest |metric - rest| seen at any frame.
+
+    Asserting on the last frame alone pins the test to the rebound timing,
+    which the mass model moves: a lumped-mass body is heavier, hits harder,
+    and is back near rest by frame 16 where a uniform-mass one was still
+    squashed. Deformation at any frame proves the metric writes.
+    """
+    scene = bpy.context.scene
+    peak = 0.0
+    for frame in range(1, frames + 1):
+        scene.frame_set(frame)
+        values = _values(obj)
+        assert np.all(np.isfinite(values))
+        peak = max(peak, float(np.abs(values - 1.0).max()))
+    return peak
+
+
 def test_enabling_a_mode_swaps_the_material_and_primes_the_attribute():
     obj = _cube()
     original = bpy.data.materials.new("Original")
@@ -78,10 +96,8 @@ def test_a_simulated_frame_writes_the_metric():
     obj = _cube()
     try:
         obj.marrow.false_color = "STRETCH"
-        _drop_and_squash(obj)
-        values = _values(obj)
-        assert np.all(np.isfinite(values))
-        assert np.abs(values - 1.0).max() > 0.01, (
+        obj.marrow.ground_enabled = True
+        assert _max_deviation(obj) > 0.01, (
             "a body squashed on the ground must not read rest everywhere"
         )
     finally:
@@ -96,9 +112,12 @@ def test_a_mode_switched_on_after_a_bake_still_colours_cached_frames():
         assert bpy.ops.marrow.bake() == {"FINISHED"}
 
         obj.marrow.false_color = "STRETCH"
-        bpy.context.scene.frame_set(16)
-        values = _values(obj)
-        assert np.abs(values - 1.0).max() > 0.01, (
+        scene = bpy.context.scene
+        peak = 0.0
+        for frame in range(1, 17):
+            scene.frame_set(frame)
+            peak = max(peak, float(np.abs(_values(obj) - 1.0).max()))
+        assert peak > 0.01, (
             "cached frames must colour even though the mode came late"
         )
     finally:

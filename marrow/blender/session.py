@@ -16,6 +16,7 @@ from mathutils import Matrix
 
 from ..blender.storage import TETS_KEY, read_bind, read_blend, read_tetmesh
 from ..core.solver_ref import SolverParams
+from ..core.tetmesh import MASS_DENSITY, node_volumes
 from ..gpu.solver import GPUSolver, MarrowNaNError
 
 CAGE_SUFFIX = "_marrow_cage"
@@ -85,8 +86,11 @@ class MarrowSession:
         # blend pass and stays bit-identical to before adaptive existed.
         self.blend_rows = read_blend(cage_obj.data)
         self.bind_idx, self.bind_w = read_bind(obj.data)
-        # Pinning is not exposed yet; every node is free.
-        self.inv_mass = np.ones(tetmesh.n_nodes, dtype=np.float64)
+        # Mass is material: each node carries the volume it represents at a
+        # fixed density, so re-tetrahedralizing finer makes the same object,
+        # not a heavier one. Pinning is not exposed yet; every node is free.
+        mass = node_volumes(tetmesh.nodes, tetmesh.tets) * MASS_DENSITY
+        self.inv_mass = 1.0 / np.maximum(mass, 1e-12)
         self._build_solver()
 
     def _collider_specs(self):

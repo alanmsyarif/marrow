@@ -1,9 +1,11 @@
 import numpy as np
 import pytest
 
-from marrow.core.lattice import build_lattice
+from marrow.core.lattice import build_lattice, grid_dims
 from marrow.core.tetmesh import (
+    MASS_DENSITY,
     TetMesh,
+    node_volumes,
     repair_orientation,
     signed_volumes,
     surface_nodes,
@@ -117,3 +119,60 @@ def test_surface_nodes_are_sorted_and_unique():
     surf = surface_nodes(mesh.tets)
     assert np.all(np.diff(surf) > 0)
     assert surf.dtype == np.int32
+
+
+def test_node_volumes_split_a_tet_four_ways():
+    vols = node_volumes(UNIT_NODES, UNIT_TET)
+    assert vols.shape == (4,)
+    assert np.allclose(vols, 1.0 / 24.0)
+
+
+def test_node_volumes_sum_to_the_lattice_volume():
+    spacing = 0.5
+    dims = (2, 2, 2)
+    mesh = build_lattice(np.zeros(3), spacing, np.ones(dims, dtype=bool))
+    total = float(node_volumes(mesh.nodes, mesh.tets).sum())
+    assert np.isclose(total, 8 * spacing**3)
+
+
+def _column(spacing):
+    dims = grid_dims((0, 0, 0), (0.6, 0.6, 1.2), spacing)
+    return build_lattice((0, 0, 0), spacing, np.ones(dims, dtype=bool))
+
+
+def _interior(mesh):
+    surf = set(surface_nodes(mesh.tets).tolist())
+    return [i for i in range(mesh.n_nodes) if i not in surf]
+
+
+def test_interior_volumes_average_one_cell():
+    """The 5-tet split hands an interior node between a third and five
+    thirds of a cell depending on surrounding parity, one cell on average."""
+    spacing = 0.25
+    mesh = _column(spacing)
+    interior = _interior(mesh)
+    assert interior, "this column must have interior nodes"
+    vols = node_volumes(mesh.nodes, mesh.tets)[interior] / spacing**3
+    assert np.all(vols >= 1.0 / 3.0 - 1e-12)
+    assert np.all(vols <= 5.0 / 3.0 + 1e-12)
+    assert np.isclose(vols.mean(), 1.0)
+
+
+def test_average_node_mass_is_one_at_default_resolution():
+    """64 mass units per cubic metre is chosen so the average interior node
+    at the panel-default Resolution of 0.25 weighs the 1 mass unit older
+    versions gave every node."""
+    mesh = _column(0.25)
+    mass = node_volumes(mesh.nodes, mesh.tets)[_interior(mesh)] * MASS_DENSITY
+    assert np.isclose(mass.mean(), 1.0)
+
+
+def test_total_mass_does_not_depend_on_resolution():
+    """The whole point of lumped mass: the same box weighs the same however
+    finely it is tetrahedralized."""
+    total = {}
+    for spacing in (0.2, 0.1):
+        mesh = _column(spacing)
+        total[spacing] = float(node_volumes(mesh.nodes, mesh.tets).sum())
+    assert np.isclose(total[0.2], total[0.1])
+    assert np.isclose(total[0.2], 0.6 * 0.6 * 1.2)
