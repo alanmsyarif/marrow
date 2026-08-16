@@ -1,10 +1,13 @@
 """Marrow operators."""
 
+import time
+
 import bpy
 import numpy as np
 
 from ..blender import false_color, group, handlers
-from ..blender.inside_bvh import cell_mask_from_object, cell_oracle_from_object
+from ..blender.inside_bvh import cell_mask_iter, cell_oracle_from_object
+from ..blender import session as session_mod
 from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
 from ..blender.storage import (
     BIND_IDX,
@@ -17,15 +20,259 @@ from ..blender.storage import (
     write_tetmesh,
 )
 from ..core.adaptive import build_adaptive_lattice
-from ..core.bind import bind_points
-from ..core.coloring import color_tets
+from ..core.bind import bind_points_iter
+from ..core.coloring import color_sets_iter
 from ..core.lattice import build_lattice
+from ..core.progress import drain
 from ..core.solver_ref import SolverParams
 from ..gpu import capability
 from ..gpu.solver import MarrowNaNError
 
 
-class MARROW_OT_tetrahedralize(bpy.types.Operator):
+# How long one modal tick is allowed to work before handing control back.
+# 50ms keeps the window repainting at ~20fps during a long cage build, which
+# is the whole point: a blocking run reports Not Responding to Windows and
+# reads as a crash, and people kill it.
+_SLICE_SECONDS = 0.05
+
+
+class _Abort(Exception):
+    """A stage refused. The message is written for the user, not the log."""
+
+
+def _stage(label, work):
+    """Re-yield a sub-generator's progress under ``label``, return its value."""
+    while True:
+        try:
+            fraction = next(work)
+        except StopIteration as done:
+            return done.value
+        yield label, fraction
+
+
+class _ModalPipeline:
+    """Runs a (label, fraction) generator in slices, keeping Blender alive.
+
+    Both long operators are the same shape: minutes of CPU work that used to
+    sit in one uninterruptible execute(), which makes Windows mark the window
+    Not Responding and reads to everyone as a crash. Subclasses supply the
+    generator through _make_work and get two entry points for free -
+    execute() drains it (scripts and tests, where nothing is watching) and
+    invoke() runs it modally on a timer, which is what a panel click uses.
+    """
+
+    # Class-level defaults so _release is safe however the operator exits.
+    _timer = None
+    _work = None
+    _label = ""
+
+    def _make_work(self, context):
+        raise NotImplementedError
+
+    def _cancel_message(self):
+        return "Marrow: cancelled"
+
+    def execute(self, context):
+        """Blocking path: scripts, tests, anything not driven by a click."""
+        try:
+            level, message = drain(self._make_work(context))
+        except _Abort as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report({level}, message)
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        """Clicked from the panel: run modally so the window stays alive."""
+        self._work = self._make_work(context)
+        self._label = "starting"
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(1.0 / 60.0, window=context.window)
+        wm.modal_handler_add(self)
+        self._show(context, 0.0)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if event.type == "ESC":
+            self._release(context)
+            # close() raises GeneratorExit at the live yield, so the
+            # generator's own finally blocks run and nothing is left parked.
+            self._work.close()
+            self.report({"INFO"}, self._cancel_message())
+            return {"CANCELLED"}
+
+        if event.type != "TIMER":
+            # Swallow everything else: the scene must not be edited out from
+            # under a half-finished run.
+            return {"RUNNING_MODAL"}
+
+        fraction = 0.0
+        deadline = time.perf_counter() + _SLICE_SECONDS
+        try:
+            while time.perf_counter() < deadline:
+                self._label, fraction = next(self._work)
+        except StopIteration as done:
+            self._release(context)
+            level, message = done.value
+            self.report({level}, message)
+            return {"FINISHED"}
+        except _Abort as exc:
+            self._release(context)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        except Exception as exc:
+            self._release(context)
+            self.report({"ERROR"}, f"Marrow: {exc}")
+            return {"CANCELLED"}
+
+        self._show(context, fraction)
+        return {"RUNNING_MODAL"}
+
+    def _show(self, context, fraction):
+        context.workspace.status_text_set(
+            f"Marrow: {self._label} {fraction * 100:.0f}%      [Esc] cancel"
+        )
+
+    def _release(self, context):
+        context.workspace.status_text_set(None)
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+
+
+def _tetrahedralize_iter(context, obj):
+    """The whole of Tetrahedralize, resumable, as (label, fraction) pairs.
+
+    Written as a generator so the operator can run it a slice at a time and
+    let Blender repaint in between - see MARROW_OT_tetrahedralize.modal. The
+    blocking path drains the same generator, so there is one implementation
+    of the pipeline rather than a fast one and a responsive one that drift.
+
+    Nothing reaches the blend file before the bind write near the end, so
+    abandoning this generator cannot leave a half-built cage. Esc closes it,
+    which raises GeneratorExit at whichever yield is live and runs the
+    finally below - so the parked modifiers come back on every exit path.
+    """
+    spacing = float(obj.marrow.resolution)
+
+    # Build from the shape the user modelled, never from a simulated
+    # pose. Without this, tetrahedralizing again after playing the
+    # timeline would make the deformed mesh the new rest shape, and the
+    # drift would compound every time Resolution was changed.
+    restore_rest(obj.data)
+
+    # The lattice, the bind and the stored rest must all describe the
+    # SAME shape: the modelled base mesh. The inside test evaluates the
+    # modifier stack, so with an armature playing a pose the cage would
+    # fill the POSED silhouette while the bind reads the unposed base
+    # mesh - two different frames, and the attachment weights synthesized
+    # between them collapse onto a handful of vertices. Park every
+    # modifier for the capture; sampling applies the same rule per frame.
+    states = [(m, m.show_viewport) for m in obj.modifiers]
+    for m, _ in states:
+        m.show_viewport = False
+    try:
+        context.view_layer.update()
+        blend_rows = None
+        if obj.marrow.adaptive:
+            # The octree follows the surface: boundary layer and thin
+            # features at Min Size, bulk at Resolution.
+            # ponytail: the octree build is one blocking call, so this stage
+            # shows a label but no motion. Chunk it if adaptive cages start
+            # taking long enough to look hung.
+            yield "building octree", 0.0
+            bounds_min, oracle = cell_oracle_from_object(obj)
+            tetmesh, blend_idx, blend_w = build_adaptive_lattice(
+                spacing, float(obj.marrow.min_resolution), oracle
+            )
+            if tetmesh.n_nodes == 0:
+                raise _Abort(
+                    "No cells inside the mesh. Lower Resolution in the "
+                    "Marrow panel until the cage fills the object."
+                )
+            blend_rows = (blend_idx, blend_w)
+        else:
+            mask, bounds_min = yield from _stage(
+                "voxelising", cell_mask_iter(obj, spacing)
+            )
+            if not mask.any():
+                raise _Abort(
+                    "No cells inside the mesh. Lower Resolution in the Marrow "
+                    "panel until the cage fills the object."
+                )
+            tetmesh = build_lattice(bounds_min, spacing, mask)
+
+        try:
+            tetmesh.validate()
+        except ValueError as exc:
+            raise _Abort(f"Invalid cage: {exc}") from exc
+
+        colors = yield from _stage(
+            "colouring", color_sets_iter(tetmesh.tets, tetmesh.n_nodes)
+        )
+
+        render_verts = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
+        obj.data.vertices.foreach_get("co", render_verts)
+        render_verts = render_verts.reshape(-1, 3)
+        world = np.array(obj.matrix_world.to_4x4())
+        world_verts = render_verts @ world[:3, :3].T + world[:3, 3]
+
+        bind_idx, bind_w = yield from _stage(
+            "binding", bind_points_iter(tetmesh.nodes, tetmesh.tets, world_verts)
+        )
+        write_bind(obj.data, bind_idx, bind_w)
+        # Captured after the restore above, so it is the modelled shape.
+        write_rest(obj.data)
+    finally:
+        for m, state in states:
+            m.show_viewport = state
+        context.view_layer.update()
+
+    cage_name = f"{obj.name}{CAGE_SUFFIX}"
+    remove_cage(obj)
+
+    cage_mesh = bpy.data.meshes.new(cage_name)
+    write_tetmesh(cage_mesh, tetmesh, colors)
+    if blend_rows is not None:
+        write_blend(cage_mesh, *blend_rows)
+    cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
+    context.collection.objects.link(cage_obj)
+    cage_obj.parent = obj
+    # Cage nodes are stored in world space. Assigning .parent in Python
+    # leaves matrix_parent_inverse at identity, so the body's transform
+    # gets applied on top and the cage draws in the wrong place - the
+    # operator does this for you, plain assignment does not.
+    cage_obj.matrix_parent_inverse = obj.matrix_world.inverted()
+    cage_obj.display_type = "WIRE"
+    cage_obj.hide_render = True
+    cage_obj.hide_select = True
+
+    # Live is the default, so a fresh cage is ready to play at once - no
+    # button press, no bake.
+    stale = handlers.SESSIONS.pop(obj.name, None)
+    if stale is not None:
+        stale.free()
+    if obj.marrow.live_enabled:
+        handlers.register_handler()
+
+    message = (
+        f"Marrow: {tetmesh.n_tets} tets, {tetmesh.n_nodes} nodes, "
+        f"{int(colors.max()) + 1 if colors.size else 0} colours"
+    )
+    if blend_rows is not None:
+        message += f", {blend_rows[0].shape[0]} blend rows"
+
+    # Say it here rather than let Bake refuse after the wait. The budget is
+    # checked when a session is built, which is long after this point.
+    if tetmesh.n_nodes > session_mod.MAX_NODES:
+        return "WARNING", (
+            f"{message}. Over the {session_mod.MAX_NODES} node budget, so Bake will "
+            f"refuse this cage - raise Resolution."
+        )
+    return "INFO", message
+
+
+class MARROW_OT_tetrahedralize(_ModalPipeline, bpy.types.Operator):
     bl_idname = "marrow.tetrahedralize"
     bl_label = "Tetrahedralize"
     bl_description = "Fill the selected mesh with a tetrahedral cage"
@@ -36,113 +283,11 @@ class MARROW_OT_tetrahedralize(bpy.types.Operator):
         obj = context.active_object
         return obj is not None and obj.type == "MESH"
 
-    def execute(self, context):
-        obj = context.active_object
-        spacing = float(obj.marrow.resolution)
+    def _make_work(self, context):
+        return _tetrahedralize_iter(context, context.active_object)
 
-        # Build from the shape the user modelled, never from a simulated
-        # pose. Without this, tetrahedralizing again after playing the
-        # timeline would make the deformed mesh the new rest shape, and the
-        # drift would compound every time Resolution was changed.
-        restore_rest(obj.data)
-
-        # The lattice, the bind and the stored rest must all describe the
-        # SAME shape: the modelled base mesh. The inside test evaluates the
-        # modifier stack, so with an armature playing a pose the cage would
-        # fill the POSED silhouette while the bind reads the unposed base
-        # mesh - two different frames, and the attachment weights synthesized
-        # between them collapse onto a handful of vertices. Park every
-        # modifier for the capture; sampling applies the same rule per frame.
-        states = [(m, m.show_viewport) for m in obj.modifiers]
-        for m, _ in states:
-            m.show_viewport = False
-        try:
-            bpy.context.view_layer.update()
-            blend_rows = None
-            if obj.marrow.adaptive:
-                # The octree follows the surface: boundary layer and thin
-                # features at Min Size, bulk at Resolution.
-                bounds_min, oracle = cell_oracle_from_object(obj)
-                tetmesh, blend_idx, blend_w = build_adaptive_lattice(
-                    spacing, float(obj.marrow.min_resolution), oracle
-                )
-                if tetmesh.n_nodes == 0:
-                    self.report(
-                        {"ERROR"},
-                        "No cells inside the mesh. Lower Resolution in the "
-                        "Marrow panel until the cage fills the object.",
-                    )
-                    return {"CANCELLED"}
-                blend_rows = (blend_idx, blend_w)
-            else:
-                mask, bounds_min = cell_mask_from_object(obj, spacing)
-                if not mask.any():
-                    self.report(
-                        {"ERROR"},
-                        "No cells inside the mesh. Lower Resolution in the Marrow panel "
-                        "until the cage fills the object.",
-                    )
-                    return {"CANCELLED"}
-
-                tetmesh = build_lattice(bounds_min, spacing, mask)
-            try:
-                tetmesh.validate()
-            except ValueError as exc:
-                self.report({"ERROR"}, f"Invalid cage: {exc}")
-                return {"CANCELLED"}
-
-            colors = color_tets(tetmesh.tets, tetmesh.n_nodes)
-
-            render_verts = np.empty(len(obj.data.vertices) * 3, dtype=np.float64)
-            obj.data.vertices.foreach_get("co", render_verts)
-            render_verts = render_verts.reshape(-1, 3)
-            world = np.array(obj.matrix_world.to_4x4())
-            world_verts = render_verts @ world[:3, :3].T + world[:3, 3]
-
-            bind_idx, bind_w = bind_points(tetmesh.nodes, tetmesh.tets, world_verts)
-            write_bind(obj.data, bind_idx, bind_w)
-            # Captured after the restore above, so it is the modelled shape.
-            write_rest(obj.data)
-        finally:
-            for m, state in states:
-                m.show_viewport = state
-            bpy.context.view_layer.update()
-
-        cage_name = f"{obj.name}{CAGE_SUFFIX}"
-        remove_cage(obj)
-
-        cage_mesh = bpy.data.meshes.new(cage_name)
-        write_tetmesh(cage_mesh, tetmesh, colors)
-        if blend_rows is not None:
-            write_blend(cage_mesh, *blend_rows)
-        cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
-        context.collection.objects.link(cage_obj)
-        cage_obj.parent = obj
-        # Cage nodes are stored in world space. Assigning .parent in Python
-        # leaves matrix_parent_inverse at identity, so the body's transform
-        # gets applied on top and the cage draws in the wrong place - the
-        # operator does this for you, plain assignment does not.
-        cage_obj.matrix_parent_inverse = obj.matrix_world.inverted()
-        cage_obj.display_type = "WIRE"
-        cage_obj.hide_render = True
-        cage_obj.hide_select = True
-
-        # Live is the default, so a fresh cage is ready to play at once - no
-        # button press, no bake.
-        stale = handlers.SESSIONS.pop(obj.name, None)
-        if stale is not None:
-            stale.free()
-        if obj.marrow.live_enabled:
-            handlers.register_handler()
-
-        message = (
-            f"Marrow: {tetmesh.n_tets} tets, {tetmesh.n_nodes} nodes, "
-            f"{int(colors.max()) + 1 if colors.size else 0} colours"
-        )
-        if blend_rows is not None:
-            message += f", {blend_rows[0].shape[0]} blend rows"
-        self.report({"INFO"}, message)
-        return {"FINISHED"}
+    def _cancel_message(self):
+        return "Marrow: tetrahedralize cancelled"
 
 
 def remove_cage(obj) -> bool:
@@ -162,6 +307,11 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
     bl_label = "De-tetrahedralize"
     bl_description = "Remove the cage and restore the object's original shape"
     bl_options = {"REGISTER", "UNDO"}
+
+    # Modal state. Class-level defaults so _release is safe on any path.
+    _timer = None
+    _work = None
+    _label = ""
 
     @classmethod
     def poll(cls, context):
@@ -299,7 +449,81 @@ def _params_from(settings) -> SolverParams:
     )
 
 
-class MARROW_OT_bake(bpy.types.Operator):
+def _bake_iter(context, obj):
+    """Bake the whole group, resumable, one frame per yield.
+
+    Esc keeps the frames already simulated rather than throwing the wait
+    away: the cache is keyed by frame, so a partial bake is playable up to
+    where it stopped. That is the difference between an interruption and a
+    loss, and it is why the frame is the slice.
+    """
+    scene = context.scene
+
+    if not capability.gpu_available():
+        raise _Abort(
+            "Marrow needs a working GPU compute context and this build of "
+            "Blender could not provide one. Simulation is unavailable."
+        )
+
+    # Bodies that collide are simulated together, so baking one has to
+    # bake all of them. Membership comes from the scene rather than from
+    # the live sessions, which are about to be cleared.
+    bodies = [obj] + group.partners_in_scene(obj)
+
+    # Drop the previous sessions and stop the handler before baking:
+    # baking steps the scene frame to sample animated colliders, and a
+    # live handler would write stale cache frames back into the mesh
+    # while we are mid-bake.
+    for body in bodies:
+        previous = handlers.SESSIONS.pop(body.name, None)
+        if previous is not None:
+            previous.free()
+    handlers.unregister_handler()
+
+    try:
+        sessions = [session_for(body) for body in bodies]
+    except ValueError as exc:
+        handlers.register_handler()
+        raise _Abort(str(exc)) from exc
+
+    try:
+        frames = yield from _stage(
+            "baking", group.bake_iter(
+                sessions, scene.frame_start, scene.frame_end, scene=scene
+            )
+        )
+    except GeneratorExit:
+        # Cancelled. Keep the sessions so what was simulated stays playable,
+        # and re-arm the handler, then let the exit continue.
+        for session in sessions:
+            handlers.SESSIONS[session.object_name] = session
+        handlers.register_handler()
+        raise
+    except MarrowNaNError as exc:
+        for session in sessions:
+            session.free()
+        # Re-arm the handler so live simulation, which was torn down for
+        # the bake, rebuilds itself on the next frame change.
+        handlers.register_handler()
+        raise _Abort(str(exc)) from exc
+    except Exception as exc:
+        # A wedged GPU queue raises StaleReadError, not MarrowNaNError.
+        # Report it the same way rather than leaking the sessions and
+        # leaving the frame handler unregistered behind a traceback.
+        for session in sessions:
+            session.free()
+        handlers.register_handler()
+        raise _Abort(f"Marrow bake failed: {exc}") from exc
+
+    for session in sessions:
+        handlers.SESSIONS[session.object_name] = session
+    handlers.register_handler()
+
+    extra = f" for {len(sessions)} bodies" if len(sessions) > 1 else ""
+    return "INFO", f"Marrow: baked {frames} frames{extra}"
+
+
+class MARROW_OT_bake(_ModalPipeline, bpy.types.Operator):
     bl_idname = "marrow.bake"
     bl_label = "Bake"
     bl_description = "Simulate the scene frame range and cache the result"
@@ -310,70 +534,11 @@ class MARROW_OT_bake(bpy.types.Operator):
         obj = context.active_object
         return obj is not None and obj.type == "MESH"
 
-    def execute(self, context):
-        obj = context.active_object
-        scene = context.scene
-        settings = obj.marrow
+    def _make_work(self, context):
+        return _bake_iter(context, context.active_object)
 
-        if not capability.gpu_available():
-            self.report(
-                {"ERROR"},
-                "Marrow needs a working GPU compute context and this build of "
-                "Blender could not provide one. Simulation is unavailable.",
-            )
-            return {"CANCELLED"}
-
-        # Bodies that collide are simulated together, so baking one has to
-        # bake all of them. Membership comes from the scene rather than from
-        # the live sessions, which are about to be cleared.
-        bodies = [obj] + group.partners_in_scene(obj)
-
-        # Drop the previous sessions and stop the handler before baking:
-        # baking steps the scene frame to sample animated colliders, and a
-        # live handler would write stale cache frames back into the mesh
-        # while we are mid-bake.
-        for body in bodies:
-            previous = handlers.SESSIONS.pop(body.name, None)
-            if previous is not None:
-                previous.free()
-        handlers.unregister_handler()
-
-        try:
-            sessions = [session_for(body) for body in bodies]
-        except ValueError as exc:
-            handlers.register_handler()
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-
-        try:
-            frames = group.bake(
-                sessions, scene.frame_start, scene.frame_end, scene=scene
-            )
-        except MarrowNaNError as exc:
-            for session in sessions:
-                session.free()
-            # Re-arm the handler so live simulation, which was torn down for
-            # the bake, rebuilds itself on the next frame change.
-            handlers.register_handler()
-            self.report({"ERROR"}, str(exc))
-            return {"CANCELLED"}
-        except Exception as exc:
-            # A wedged GPU queue raises StaleReadError, not MarrowNaNError.
-            # Report it the same way rather than leaking the sessions and
-            # leaving the frame handler unregistered behind a traceback.
-            for session in sessions:
-                session.free()
-            handlers.register_handler()
-            self.report({"ERROR"}, f"Marrow bake failed: {exc}")
-            return {"CANCELLED"}
-
-        for session in sessions:
-            handlers.SESSIONS[session.object_name] = session
-        handlers.register_handler()
-
-        extra = f" for {len(sessions)} bodies" if len(sessions) > 1 else ""
-        self.report({"INFO"}, f"Marrow: baked {frames} frames{extra}")
-        return {"FINISHED"}
+    def _cancel_message(self):
+        return "Marrow: bake stopped - frames simulated so far are cached"
 
 
 class MARROW_OT_free(bpy.types.Operator):
@@ -459,6 +624,11 @@ class MARROW_OT_collider_add(bpy.types.Operator):
     )
     bl_options = {"REGISTER", "UNDO"}
 
+    # Modal state. Class-level defaults so _release is safe on any path.
+    _timer = None
+    _work = None
+    _label = ""
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -487,6 +657,11 @@ class MARROW_OT_collider_remove(bpy.types.Operator):
     bl_label = "Remove Collider"
     bl_description = "Unlink the selected collider from the collection"
     bl_options = {"REGISTER", "UNDO"}
+
+    # Modal state. Class-level defaults so _release is safe on any path.
+    _timer = None
+    _work = None
+    _label = ""
 
     @classmethod
     def poll(cls, context):

@@ -6,6 +6,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
 from ..core.lattice import grid_dims
+from ..core.progress import drain
 
 _EPS = 1e-6
 # Three directions, none axis-aligned and none a multiple of another, so a ray
@@ -65,6 +66,22 @@ def is_inside(bvh, point: Vector) -> bool:
 
 def cell_mask_from_object(obj, spacing: float):
     """Voxel occupancy of ``obj`` at ``spacing``, by cell-centre inside test."""
+    return drain(cell_mask_iter(obj, spacing))
+
+
+def cell_mask_iter(obj, spacing: float):
+    """cell_mask_from_object as a generator, yielding 0..1 per x-plane.
+
+    This pass is the freeze: three ray casts per cell, in Python, over the
+    whole bounding box. Measured at 54.7s of a 66.2s Tetrahedralize on a
+    34k-vertex mesh at Resolution 0.08 - 6.5M cells - with Blender's window
+    reporting Not Responding for the duration.
+
+    One yield per x-plane rather than per cell: a plane is a few milliseconds
+    of work at any sane resolution, which is fine grained enough for the
+    operator to repaint between slices, while a yield per cell would put
+    generator overhead on the hottest loop in the addon.
+    """
     bvh, coords = _world_bvh(obj)
     bounds_min = coords.min(axis=0)
     bounds_max = coords.max(axis=0)
@@ -76,6 +93,10 @@ def cell_mask_from_object(obj, spacing: float):
             for k in range(dims[2]):
                 centre = bounds_min + (np.array([i, j, k]) + 0.5) * spacing
                 mask[i, j, k] = is_inside(bvh, Vector(centre.tolist()))
+        if i + 1 < dims[0]:
+            yield (i + 1) / dims[0]
+
+    yield 1.0
     return mask, bounds_min
 
 

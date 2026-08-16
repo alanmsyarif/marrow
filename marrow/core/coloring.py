@@ -7,6 +7,8 @@ same node.
 
 import numpy as np
 
+from .progress import drain
+
 
 def color_sets(sets, n_nodes: int) -> np.ndarray:
     """Assign each row a colour such that a colour's rows are node-disjoint.
@@ -14,12 +16,30 @@ def color_sets(sets, n_nodes: int) -> np.ndarray:
     Rows are variable-length node index sequences; negative entries (the
     padding blend rows use for unused master slots) are ignored.
     """
-    colors = np.full(len(list(sets)), -1, dtype=np.int32)
+    return drain(color_sets_iter(sets, n_nodes))
+
+
+def color_sets_iter(sets, n_nodes: int, block: int = 20_000):
+    """color_sets as a generator, yielding 0..1 every ``block`` rows.
+
+    Greedy colouring is order dependent - a row takes the lowest colour its
+    nodes have not already claimed - so the chunking must not disturb the
+    order rows are visited in. It does not: the loop is unchanged and the
+    yield is only a pause inside it. Chunk size therefore cannot change the
+    result, which is what the tests assert.
+    """
+    rows = list(sets)
+    total = len(rows)
+    colors = np.full(total, -1, dtype=np.int32)
+
+    if total == 0:
+        yield 1.0
+        return colors
 
     # node_color_used[node] is the set of colours already claimed at that node.
     node_colors: list[set[int]] = [set() for _ in range(int(n_nodes))]
 
-    for r, row in enumerate(sets):
+    for r, row in enumerate(rows):
         taken = set()
         for n in row:
             if n >= 0:
@@ -32,6 +52,10 @@ def color_sets(sets, n_nodes: int) -> np.ndarray:
             if n >= 0:
                 node_colors[int(n)].add(c)
 
+        if (r + 1) % block == 0 and (r + 1) < total:
+            yield (r + 1) / total
+
+    yield 1.0
     return colors
 
 

@@ -220,6 +220,16 @@ The cage uses a **cube-split lattice with checkerboard parity**, not conforming 
 
 Tets are graph-coloured at build time so each colour dispatches race-free with no atomics. Interior cage nodes never cross PCIe; only render vertices are read back.
 
+### Long runs
+
+**Tetrahedralize and Bake report progress and can be cancelled.** Both show the stage and a percentage in the status bar while they work, and **Esc** stops them. Neither blocks the window any more, so a dense cage no longer looks like a hang — which it did, and people killed Blender over it.
+
+The two cancel differently, because the work is different. Esc during Tetrahedralize discards everything: nothing is written to the file until the cage is complete, so there is no half-built state to leave behind. Esc during a Bake **keeps the frames it already simulated** — the cache is keyed by frame, so a bake stopped at 96 of 250 is playable to 96 and is not a wasted wait.
+
+Cost scales sharply with Resolution: halving it is roughly eight times the cage. On a 34,000-vertex mesh, Resolution 0.25 builds in about 7 seconds, 0.12 in 22, and 0.08 in 66 — and the voxel pass, which asks inside-or-outside about every cell in the bounding box, is most of that at fine settings. Tetrahedralize now also names the cage size when it finishes, and warns there if the cage is over the node budget, rather than letting Bake be the first to mention it.
+
+`tools/estimate_cage.py` reports what a setting will cost before you commit to it: run it from the Scripting tab with the object selected.
+
 ## Limitations
 
 - **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Collision against a *collider* is a distance field and does not have this limit.

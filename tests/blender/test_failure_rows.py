@@ -60,7 +60,11 @@ def test_a_nan_bake_reports_an_error_not_a_traceback():
 
     # Bake drives group.bake, because bodies that collide are simulated
     # together and a session cannot bake itself out of that.
-    original = group_mod.bake
+    # bake_iter, not bake: the operator drives the chunked generator so it can
+    # yield to Blender between frames, and bake() is now a drain of it. The
+    # failure being checked is unchanged - a NaN must surface as a reported
+    # error, not a traceback - only the seam it is injected at.
+    original = group_mod.bake_iter
 
     def exploding_bake(members, start, end, scene=None):
         raise MarrowNaNError(
@@ -68,8 +72,9 @@ def test_a_nan_bake_reports_an_error_not_a_traceback():
             "Raise Substeps, or lower Stiffness and Volume Preservation, "
             "and bake again."
         )
+        yield  # pragma: no cover - makes this a generator, like the real one
 
-    group_mod.bake = exploding_bake
+    group_mod.bake_iter = exploding_bake
     try:
         bpy.ops.marrow.bake()
     except RuntimeError as exc:
@@ -77,7 +82,7 @@ def test_a_nan_bake_reports_an_error_not_a_traceback():
     else:
         raise AssertionError("a NaN bake must report an error")
     finally:
-        group_mod.bake = original
+        group_mod.bake_iter = original
 
 
 def test_node_budget_refusal_names_the_count():

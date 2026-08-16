@@ -16,6 +16,8 @@ frame handler happened to reach first.
 
 import bpy
 
+from ..core.progress import drain
+
 _warned: set = set()
 
 
@@ -182,6 +184,17 @@ def bake(members, frame_start: int, frame_end: int, scene=None) -> int:
     Rebuilds every solver first so a bake always starts from rest rather than
     from wherever a previous bake left the cages.
     """
+    return drain(bake_iter(members, frame_start, frame_end, scene=scene))
+
+
+def bake_iter(members, frame_start: int, frame_end: int, scene=None):
+    """bake as a generator, yielding 0..1 after each simulated frame.
+
+    One frame per yield is the natural slice: it is the unit the cache is
+    keyed by, so a bake stopped partway leaves whole frames rather than a
+    half-integrated one. The operator uses that - Esc keeps what has been
+    simulated instead of discarding the wait.
+    """
     members = list(members)
     samples_scene = any(
         m.collider_objects
@@ -201,16 +214,28 @@ def bake(members, frame_start: int, frame_end: int, scene=None) -> int:
         member.live = False
         member.baked = True
 
-    for frame in range(int(frame_start), int(frame_end) + 1):
-        if scene is not None and samples_scene:
-            # Re-sample collider transforms and attachment targets so
-            # animation works. Without this a falling ball would sit still
-            # for the whole bake.
-            scene.frame_set(frame)
-        _step_group(members, frame)
+    first, last = int(frame_start), int(frame_end)
+    total = max(last - first + 1, 1)
+    reached = first - 1
+    try:
+        for frame in range(first, last + 1):
+            if scene is not None and samples_scene:
+                # Re-sample collider transforms and attachment targets so
+                # animation works. Without this a falling ball would sit still
+                # for the whole bake.
+                scene.frame_set(frame)
+            _step_group(members, frame)
+            reached = frame
+            if frame < last:
+                yield (frame - first + 1) / total
+    finally:
+        # Also runs when the generator is closed partway, so an interrupted
+        # bake still reports how far it actually got and the frames already
+        # cached stay playable.
+        for member in members:
+            member._last_simulated = reached
 
-    for member in members:
-        member._last_simulated = int(frame_end)
+    yield 1.0
     return len(members[0]._cache)
 
 
