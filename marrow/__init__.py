@@ -1,6 +1,16 @@
 """Marrow: GPU tetrahedral soft body for Blender."""
 
-__version__ = "0.9.2"
+import tomllib
+from pathlib import Path
+
+# blender_manifest.toml is the single source of truth for the version. Blender
+# reads that file without running any Python, so it cannot be generated from
+# here - the only direction that leaves one copy is to read it back. A second
+# literal in this file is exactly what drifted before: manifest said 1.0.0
+# while __version__ still said 0.9.2.
+__version__ = tomllib.loads(
+    (Path(__file__).parent / "blender_manifest.toml").read_text(encoding="utf-8")
+)["version"]
 
 # bpy is imported inside register()/unregister(), not at module scope. Any
 # `from .core.x import ...` executes this file first, so a top-level

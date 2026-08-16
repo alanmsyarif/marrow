@@ -54,3 +54,20 @@ def test_the_guard_can_actually_see_an_offender(tmp_path):
     clean = tmp_path / "clean.py"
     clean.write_text("from ..core.tetmesh import TetMesh\nfrom . import kernels\n")
     assert _absolute_self_imports(clean) == []
+
+
+def test_version_is_read_from_the_manifest_not_copied():
+    """One version string lives in blender_manifest.toml. __init__ reads it.
+
+    Parsed by hand here rather than with tomllib, so this is not just the
+    addon's own parse compared against itself. Catches the drift that already
+    happened once: manifest bumped, __version__ literal left behind.
+    """
+    import marrow
+
+    declared = next(
+        line.split("=", 1)[1].strip().strip('"')
+        for line in (ADDON / "blender_manifest.toml").read_text(encoding="utf-8").splitlines()
+        if line.startswith("version")
+    )
+    assert marrow.__version__ == declared
