@@ -232,17 +232,31 @@ sections:
   }
 ```
 
-`f` is the deviatoric pass's `F`, stale by one projection. That is the same
-staleness the existing deviatoric-then-hydrostatic split already accepts,
-and rebuilding it costs three more `imageLoad`s for no visible gain. The
-oracle does the same, so parity holds either way.
+The fiber block rebuilds `F` (`mat3 ff`) from the positions the deviatoric
+projection has just moved, rather than reusing the `f` computed at the top of
+`main()`. There is no pre-existing staleness here to match: `f` is built
+before any `project()` call in the dispatch, and a colour's tets are
+node-disjoint, so the deviatoric pass reads a fresh `F`. Reusing it for the
+fiber term would be the first stale one, and it would linearise the
+constraint about a configuration the solver has already left. This is the
+same reason the hydrostatic block recomputes under its own comment calling
+that recompute load-bearing rather than an oversight. The oracle recomputes
+in the same place, so parity holds.
 
 ### `marrow/gpu/solver.py`
 
 The solve kernel gains one image (`fiber`, RGBA32F, READ) and six push
 constants (`fiber_k`, `wave_amp`, `wave_len`, `wave_speed`, `wave_time`,
-`waveform`). Twelve push constants totals roughly 48 bytes, under the
-128-byte Vulkan floor, so the eventual backend port stays viable.
+`waveform`). The solve kernel's twelve push constants - ten floats and two
+ints, 48 bytes of scalar data - stay under the 128-byte Vulkan floor, and
+the driver emits no size warning when it builds.
+
+The kernel that will need a UBO at port time is `collide`, not this one, and
+it needed one before this feature. `COLLIDE_PUSH` (`kernels.py`) carries two
+`MAT4`s, which are the whole 128-byte floor on their own; the driver warns
+its way up to `the constants added so far already reach 184 bytes` as the
+four scalars after them are declared. No push-constant list in `kernels.py`
+changed on this branch, so fibers add no pressure of their own.
 
 `sim_time` is initialized to zero and advanced in `substep_constraints`.
 
@@ -317,9 +331,13 @@ confirms De-tetrahedralize strips it.
 
 `test_fiber_ui.py` covers the three gating states.
 
-`test_kernels_compile.py` already covers the new kernel building, which is
-where a driver rejecting `outerProduct` or the push-constant count would
-surface.
+Nothing needs adding for kernel compilation, but not via
+`test_kernels_compile.py` - that file builds `PREDICT_SRC` and a
+deliberately broken shader, and never touches `SOLVE_SRC`. The solve
+kernel's build is covered anyway: `test_solve_vs_oracle` and
+`test_fiber_vs_oracle` call `build()` on `SOLVE_SRC` directly, and
+`test_fiber_solver` compiles it by way of a real session. A driver
+rejecting `outerProduct` or the push-constant count surfaces there.
 
 GPU tests run on Blender 5.2. 4.5 fails them all for environmental reasons.
 
