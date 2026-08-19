@@ -227,11 +227,38 @@ class MarrowSettings(bpy.types.PropertyGroup):
         description=(
             "How hard the flesh follows the animation. 1.0 rides the bones "
             "exactly; lower values let the bones lead and the flesh lag, "
-            "jiggle and overshoot"
+            "jiggle and overshoot. 0 with Follows Animation on drives the "
+            "pinned region only and leaves the rest of the body to the "
+            "simulation, which is what lets a pin carry a body"
         ),
         default=0.5,
         min=0.0,
         max=1.0,
+    )
+    pin_group: bpy.props.StringProperty(
+        name="Pin Group",
+        description=(
+            "Vertex group whose weight holds material in place. 1.0 pins "
+            "solid and outranks the armature, colliders and gravity alike. "
+            "Lower makes a node heavier rather than partly held - gravity "
+            "is an acceleration, so a heavy node still falls; the falloff "
+            "is there to soften the edge of the pinned region. Empty pins "
+            "nothing"
+        ),
+        default="",
+    )
+    pin_follows: bpy.props.BoolProperty(
+        name="Follows Animation",
+        description=(
+            "Let the pinned region ride the animation instead of staying "
+            "where it was tetrahedralized. Still rigid - it drives the "
+            "material rather than being pushed by it, and outranks every "
+            "collider. Needs Attachment on, which is what supplies the "
+            "targets - set Attach Stiffness to 0 to drive the pin without "
+            "the rest of the body being held to its rest pose. Off is a "
+            "fixed anchor"
+        ),
+        default=False,
     )
     body_collision: bpy.props.BoolProperty(
         name="Collide With Bodies",
@@ -381,6 +408,18 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = attach.row()
         row.enabled = settings.attach_enabled
         row.prop(settings, "attach_stiffness")
+
+        # Below Attachment because that is the ordering the solver has:
+        # the attach kernel skips a node with no inverse mass, so a pin
+        # outranks the armature rather than fighting it.
+        pin = sim.box()
+        pin.label(text="Pin", icon="PINNED")
+        pin.prop_search(settings, "pin_group", obj, "vertex_groups", text="")
+        # Targets arrive through the attachment pass, so the checkbox drives
+        # nothing without it - grey rather than offer a dead option.
+        row = pin.row()
+        row.enabled = settings.attach_enabled
+        row.prop(settings, "pin_follows")
 
         contact = sim.box()
         contact.prop(settings, "self_collision")

@@ -11,7 +11,7 @@ quaternion skinning both work without reimplementing either.
 import numpy as np
 
 from ..blender.storage import read_attach, read_rest, write_attach
-from ..core.attach import synth_weights, targets_from
+from ..core.attach import blend_scalar, synth_weights, targets_from
 
 # Where the modifiers' pre-mute visibility is stored on the object, so
 # toggling Attachment off or De-tetrahedralize can hand the display back.
@@ -249,3 +249,42 @@ def sample_targets(obj, idx, w):
         mesh.vertices.foreach_set("co", current)
         mesh.update()
     return targets
+
+
+def pin_weights(obj, tetmesh, group_name):
+    """Per-cage-node pin weight from a vertex group, or None to pin nothing.
+
+    The group is painted on the RENDER mesh, because that is the geometry a
+    user can see and select; cage nodes are interior lattice points with no
+    groups of their own. They read the group through the same k-nearest map
+    the attachment pass uses, so a node is held exactly when the render
+    surface around it is.
+
+    None rather than a zero array for "nothing to do": a missing, renamed or
+    unpainted group must leave inverse mass bit-identical to an unpinned
+    body, and must not pay for the k-nearest synthesis to find that out.
+    """
+    name = str(group_name or "")
+    if not name:
+        return None
+    group = obj.vertex_groups.get(name)
+    if group is None:
+        # Renamed or deleted since the panel was set. Not an error - the
+        # bake should still run, unpinned.
+        return None
+
+    mesh = obj.data
+    per_vertex = np.zeros(len(mesh.vertices), dtype=np.float64)
+    index = group.index
+    # No foreach_get for group weights: a vertex carries only the groups it
+    # belongs to, so this is a per-vertex walk. Once per solver build.
+    for vertex in mesh.vertices:
+        for entry in vertex.groups:
+            if entry.group == index:
+                per_vertex[vertex.index] = entry.weight
+                break
+    if not per_vertex.any():
+        return None
+
+    idx, w = ensure_weights(obj, tetmesh)
+    return blend_scalar(idx, w, per_vertex)

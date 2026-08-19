@@ -352,7 +352,27 @@ void main()
   ivec2 c = texel(i);
 
   vec4 xi = imageLoad(x, c);
-  if (!(xi.w > 0.0)) { return; }   // pinned: position and velocity both hold
+  if (!(xi.w > 0.0)) {
+    // Pinned. A kinematic pin's position still has to advance, or the
+    // target the attach pass stored would be discarded every substep. Its
+    // velocity stays zero: it is driven, not simulated, and predict reads
+    // no velocity for a pinned node anyway.
+    //
+    // Guarded rather than written unconditionally. For a static pin p == x
+    // here - predict copies it, every projection scales its correction by
+    // an inverse mass of zero, and all three contact passes return early -
+    // so an unguarded store would be a no-op on paper. But this early
+    // return is also the backstop that makes "a pin does not move" true of
+    // integrate itself rather than only of every pass upstream, and in a
+    // module that already distrusts its own GPU state that is worth more
+    // than one saved uniform. test_integrate_leaves_pinned_nodes_alone
+    // feeds a p the pipeline cannot produce and holds this to it.
+    if (kinematic != 0) {
+      imageStore(v, c, vec4(0.0));
+      imageStore(x, c, vec4(imageLoad(p, c).xyz, xi.w));
+    }
+    return;
+  }
 
   vec3 pi = imageLoad(p, c).xyz;
   vec3 vel = (pi - xi.xyz) / h * damping;
@@ -747,7 +767,25 @@ void main()
   ivec2 c = texel(i);
 
   vec4 pi = imageLoad(p, c);
-  if (!(pi.w > 0.0)) { return; }   // a pin outranks the armature
+  if (!(pi.w > 0.0)) {
+    // A pin outranks the armature - unless it is kinematic, in which case
+    // it IS the armature: still rigid, but driven. Stored outright rather
+    // than projected, because there is no inverse mass here to weigh a
+    // correction against. Read straight from the image, not through the
+    // local below, which shadows it.
+    if (kinematic != 0) {
+      imageStore(p, c, vec4(imageLoad(target, c).xyz, pi.w));
+    }
+    return;
+  }
+
+  // Stiffness 0 with a driven pin: the pass runs only to feed the pins
+  // above, and every free node is left to the elastic solve. Aiming free
+  // material at its evaluated position aims it at the REST pose wherever
+  // the animation does not reach, so that grip is what stops a pin from
+  // carrying a body - measured on a 23,697-node cage, a pin travelling
+  // 1.473 dragged 0.158 of body at stiffness 0.05 and 1.515 without it.
+  if (drive_free == 0) { return; }
 
   // XPBD projection of C = x - q with unit gradients:
   // dx = -w * C / (w + alpha_tilde), compliance sent as alpha and folded
@@ -768,6 +806,8 @@ ATTACH_PUSH = [
     ("FLOAT", "h"),
     ("FLOAT", "compliance"),
     ("INT", "n_nodes"),
+    ("INT", "kinematic"),
+    ("INT", "drive_free"),
 ]
 
 

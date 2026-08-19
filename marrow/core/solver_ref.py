@@ -19,6 +19,9 @@ class SolverParams:
     lam: float = 1.0e5      # hydrostatic (volume) stiffness
     damping: float = 0.999
     attach: float = 0.0     # attachment stiffness, 0..1; 0 disables the pass
+    # Pinned nodes ride the attachment targets rather than staying put.
+    # Needs the attachment pass, which is where targets arrive.
+    pin_kinematic: bool = False
 
 
 @dataclass
@@ -75,10 +78,17 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
         )
 
         solve_constraints(state, tets, dm_inv, rest_vol, params, h)
-        if params.attach > 0.0 and targets is not None:
+        # Stiffness 0 still runs the pass when there are driven pins: they
+        # need targets, and the free material needs to be left alone. See
+        # solve_attachment's drive_free.
+        drive_free = params.attach > 0.0
+        if targets is not None and (drive_free or params.pin_kinematic):
             solve_attachment(
                 state, targets,
-                attach_compliance(params.attach, params.dt), h,
+                attach_compliance(params.attach, params.dt) if drive_free else 0.0,
+                h,
+                kinematic=params.pin_kinematic,
+                drive_free=drive_free,
             )
 
         # integrate
@@ -86,6 +96,16 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
             (state.predicted[movable] - state.nodes[movable]) / h * params.damping
         )
         state.nodes[movable] = state.predicted[movable]
+        # A kinematic pin's position advances too, or the target the
+        # attachment pass stored would be discarded every substep. Its
+        # velocity stays zero: it is driven, not simulated, and predict
+        # reads no velocity for a pinned node. Guarded rather than
+        # unconditional, mirroring the kernel - for a static pin this would
+        # be a no-op, but the guard is what keeps "a pin does not move" a
+        # property of the integrator itself and not merely of every pass
+        # that runs before it.
+        if params.pin_kinematic:
+            state.nodes[~movable] = state.predicted[~movable]
 
 
 def attach_compliance(stiffness: float, dt: float) -> float:
@@ -104,7 +124,8 @@ def attach_compliance(stiffness: float, dt: float) -> float:
     return (1.0 - stiffness) / stiffness * float(dt) * float(dt)
 
 
-def solve_attachment(state, targets, compliance: float, h: float) -> None:
+def solve_attachment(state, targets, compliance: float, h: float,
+                     kinematic: bool = False, drive_free: bool = True) -> None:
     """Pull every free node towards its animation target, in place.
 
     One position constraint per node, C = x - q, projected once per
@@ -112,17 +133,34 @@ def solve_attachment(state, targets, compliance: float, h: float) -> None:
     attach_compliance); zero is a hard snap, larger values let the flesh
     lag and overshoot. The projection is diagonal - each node moves along
     its own constraint only - so no colouring is needed.
+
+    ``kinematic`` drives the pinned nodes too. A pin normally outranks the
+    animation and is skipped here; under a kinematic pin it takes its
+    target outright and carries the surrounding material along. That is a
+    store rather than a projection, because compliance has no meaning
+    without an inverse mass to weigh the correction against.
+
+    ``drive_free`` off leaves every unpinned node alone - targets for the
+    pins, hands off everything else. This is what makes a driven pin able
+    to carry a body: aiming free material at its evaluated position aims
+    it at the REST pose wherever the animation does not reach, so the same
+    pass that feeds the pin its target is otherwise nailing the body down.
+    Measured on a 23,697-node cage, a pin travelling 1.473 dragged the body
+    0.158 at stiffness 0.05 and 1.515 with the grip released.
     """
     if compliance < 0.0:
         return
-    alpha_tilde = compliance / (h * h)
+    targets = np.asarray(targets, dtype=np.float64)
     movable = state.inv_mass > 0.0
-    w = state.inv_mass[movable]
-    pull = w / (w + alpha_tilde)
-    state.predicted[movable] += (
-        (np.asarray(targets, dtype=np.float64)[movable] - state.predicted[movable])
-        * pull[:, None]
-    )
+    if drive_free:
+        alpha_tilde = compliance / (h * h)
+        w = state.inv_mass[movable]
+        pull = w / (w + alpha_tilde)
+        state.predicted[movable] += (
+            (targets[movable] - state.predicted[movable]) * pull[:, None]
+        )
+    if kinematic:
+        state.predicted[~movable] = targets[~movable]
 
 
 def blend_project(state, rows, weights) -> None:

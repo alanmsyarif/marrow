@@ -80,7 +80,8 @@ class GPUSolver:
     def __init__(self, mesh, inv_mass, params, ground_z=0.0, ground_on=False,
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
-                 attach_stiffness=0.0, attach_targets=None, blend_rows=None):
+                 attach_stiffness=0.0, attach_targets=None, blend_rows=None,
+                 pin_kinematic=False):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -105,7 +106,23 @@ class GPUSolver:
         # were built from stays the modelled shape regardless - only the
         # starting positions ride the pose, so the body begins posed
         # instead of snapping towards the pose on frame one.
-        self.attach_enabled = float(attach_stiffness) > 0.0
+        # Pinned nodes ride the targets instead of being skipped by the
+        # attach pass. Inert without targets, which only exist when
+        # attachment is on.
+        self.pin_kinematic = bool(pin_kinematic)
+        # Stiffness above zero pulls every free node towards its animated
+        # position. Zero alongside a driven pin means "targets for the pins,
+        # hands off the rest": the pass still runs, since that is where a
+        # pin gets its target, but free material is left to the elastic
+        # solve. Aiming free material at its evaluated position aims it at
+        # the REST pose wherever the animation does not reach, so this grip
+        # is exactly what stops a pin carrying a body - measured on a
+        # 23,697-node cage, a pin travelling 1.473 dragged 0.158 of body at
+        # stiffness 0.05 and 1.515 with the grip released.
+        self.drive_free = float(attach_stiffness) > 0.0
+        self.attach_enabled = self.drive_free or (
+            self.pin_kinematic and attach_targets is not None
+        )
         self.attach_compliance = 0.0
         rest_start = self._lift_out_of_ground(mesh.nodes)
         start = rest_start
@@ -120,9 +137,21 @@ class GPUSolver:
                     f"attach_targets must be {mesh.nodes.shape}, "
                     f"got {attach_targets.shape}"
                 )
-            stiffness = float(attach_stiffness)
-            self.attach_compliance = attach_compliance(stiffness, self.params.dt)
-            start = self._lift_out_of_ground(attach_targets)
+            if self.drive_free:
+                self.attach_compliance = attach_compliance(
+                    float(attach_stiffness), self.params.dt
+                )
+                start = self._lift_out_of_ground(attach_targets)
+            else:
+                # Only the driven nodes begin on their targets. Starting the
+                # free material there too would apply the very displacement
+                # this mode exists to avoid.
+                posed = np.where(
+                    (np.asarray(inv_mass, dtype=np.float64) == 0.0)[:, None],
+                    attach_targets,
+                    mesh.nodes,
+                )
+                start = self._lift_out_of_ground(posed)
 
         colors = color_tets(mesh.tets, mesh.n_nodes)
         ordered, self.offsets = color_ordered(mesh.tets, colors)
@@ -312,7 +341,7 @@ class GPUSolver:
              ("RGBA32F", "FLOAT_2D", "v", {"READ", "WRITE"}),
              ("R32F", "FLOAT_2D", "mark", {"READ"})],
             [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
-             ("FLOAT", "max_vel")],
+             ("FLOAT", "max_vel"), ("INT", "kinematic")],
         )
 
     def _lift_out_of_ground(self, nodes: np.ndarray) -> np.ndarray:
@@ -428,6 +457,9 @@ class GPUSolver:
         self.sh_integrate.uniform_float("h", h)
         self.sh_integrate.uniform_float("damping", self.params.damping)
         self.sh_integrate.uniform_int("n_nodes", self.n_nodes)
+        self.sh_integrate.uniform_int(
+            "kinematic", 1 if self.pin_kinematic else 0
+        )
         # 0.2 * thickness / h, from the reference self-collision: a node may
         # not cross more than a fifth of a contact thickness per substep, or
         # fast material tunnels through thin features and wads up. The larger
@@ -473,6 +505,8 @@ class GPUSolver:
         self.sh_attach.uniform_float("h", h)
         self.sh_attach.uniform_float("compliance", self.attach_compliance)
         self.sh_attach.uniform_int("n_nodes", self.n_nodes)
+        self.sh_attach.uniform_int("kinematic", 1 if self.pin_kinematic else 0)
+        self.sh_attach.uniform_int("drive_free", 1 if self.drive_free else 0)
         gpu.compute.dispatch(self.sh_attach, node_groups, 1, 1)
 
     def set_targets(self, targets) -> None:

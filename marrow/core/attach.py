@@ -99,3 +99,28 @@ def targets_from(idx: np.ndarray, w: np.ndarray, evaluated_verts: np.ndarray) ->
             f"evaluated mesh has only {verts.shape[0]} vertices"
         )
     return np.einsum("nk,nkj->nj", w, verts[idx])
+
+
+def blend_scalar(idx: np.ndarray, w: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Blend a per-render-vertex scalar into one value per cage node.
+
+    The scalar twin of ``targets_from``, and the whole of how a painted
+    vertex group reaches the cage: pin weights are authored on the render
+    mesh, where they can be seen and painted, and each cage node reads the
+    weighted mean of the same handful of vertices its motion already comes
+    from. Rows sum to 1, so a uniformly painted mesh blends to that value
+    everywhere rather than fading off into the interior.
+    """
+    idx = np.asarray(idx, dtype=np.int64)
+    w = np.asarray(w, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError(f"values must be (V,), got {values.shape}")
+    if idx.shape[0] == 0:
+        return np.zeros(0, dtype=np.float64)
+    if int(idx.max()) >= values.shape[0]:
+        raise ValueError(
+            f"weights index vertex {int(idx.max())} but the mesh has only "
+            f"{values.shape[0]} vertices"
+        )
+    return np.einsum("nk,nk->n", w, values[idx])

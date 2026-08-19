@@ -436,6 +436,8 @@ def session_for(obj) -> MarrowSession:
         friction=float(settings.friction),
         attach_enabled=bool(settings.attach_enabled),
         attach_stiffness=float(settings.attach_stiffness),
+        pin_group=str(settings.pin_group),
+        pin_kinematic=bool(settings.pin_follows),
     )
 
 

@@ -31,7 +31,8 @@ class MarrowSession:
     def __init__(self, obj, params: SolverParams = None, ground_z=0.0, ground_on=False,
                  collider_objects=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
-                 attach_enabled=False, attach_stiffness=0.0):
+                 attach_enabled=False, attach_stiffness=0.0, pin_group=None,
+                 pin_kinematic=None):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -59,6 +60,22 @@ class MarrowSession:
         # adding a setting of its own.
         self.resolution = float(
             getattr(getattr(obj, "marrow", None), "resolution", 0.25)
+        )
+        # Vertex group whose weight holds material still. None means "read
+        # the panel", the same rule Resolution follows, so the handler path
+        # - MarrowSession(obj) with no kwargs - picks a pin up without the
+        # caller having to know about it.
+        self.pin_group = (
+            str(getattr(getattr(obj, "marrow", None), "pin_group", ""))
+            if pin_group is None
+            else str(pin_group)
+        )
+        # Whether that pin rides the animation or stays put. Same None-reads-
+        # the-panel rule as pin_group above.
+        self.pin_kinematic = (
+            bool(getattr(getattr(obj, "marrow", None), "pin_follows", False))
+            if pin_kinematic is None
+            else bool(pin_kinematic)
         )
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
@@ -89,11 +106,6 @@ class MarrowSession:
         # blend pass and stays bit-identical to before adaptive existed.
         self.blend_rows = read_blend(cage_obj.data)
         self.bind_idx, self.bind_w = read_bind(obj.data)
-        # Mass is material: each node carries the volume it represents at a
-        # fixed density, so re-tetrahedralizing finer makes the same object,
-        # not a heavier one. Pinning is not exposed yet; every node is free.
-        mass = node_volumes(tetmesh.nodes, tetmesh.tets) * MASS_DENSITY
-        self.inv_mass = 1.0 / np.maximum(mass, 1e-12)
         self._build_solver()
 
     def _collider_specs(self):
@@ -141,10 +153,66 @@ class MarrowSession:
             specs.append((kind, world.inverted(), world, sticky, None, mu))
         return specs
 
+    @property
+    def attach_active(self) -> bool:
+        """Whether the attachment pass runs at all.
+
+        Stiffness above zero pulls the free material towards the animation.
+        Stiffness zero still runs the pass when a pin is driven, because
+        that is where the pin gets its target - it just stops gripping
+        everything else.
+
+        One predicate, deliberately, because two places need it: building
+        the solver, and deciding whether a bake has to walk the scene
+        forward so the targets change. Written out twice, the second copy
+        kept the old `stiffness > 0` test and pins-only baked every frame
+        against the start pose - the animation invisible to the one mode
+        built entirely to follow it.
+        """
+        return self.attach_enabled and (
+            self.attach_stiffness > 0.0 or self.pin_kinematic
+        )
+
+    def _compute_inv_mass(self) -> None:
+        """Lumped inverse mass for every cage node, pins included.
+
+        Mass is material: each node carries the volume it represents at a
+        fixed density, so re-tetrahedralizing finer makes the same object,
+        not a heavier one. A pin group then scales that: weight 1 leaves
+        zero inverse mass, which predict, integrate and every contact pass
+        already read as "this node does not move".
+
+        Called from _build_solver rather than __init__ so a restart -
+        refresh_from_object then _build_solver - picks up a repainted group
+        instead of holding the weights the session was born with.
+        """
+        mass = node_volumes(self.tetmesh.nodes, self.tetmesh.tets) * MASS_DENSITY
+        self.inv_mass = 1.0 / np.maximum(mass, 1e-12)
+        if not self.pin_group:
+            return
+        import bpy
+
+        from .attach import pin_weights
+
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return
+        weights = pin_weights(obj, self.tetmesh, self.pin_group)
+        if weights is None:
+            return
+        scale = np.clip(1.0 - weights, 0.0, 1.0)
+        # A fully painted blend row sums to 1 only to float precision, so a
+        # solid pin can leave 1e-16 of inverse mass behind - and predict
+        # only asks `w > 0.0`, so that speck still takes the whole gravity
+        # step and the "pinned" body sails away. Snap it to a real zero.
+        scale[scale < 1e-6] = 0.0
+        self.inv_mass *= scale
+
     def _build_solver(self) -> None:
+        self._compute_inv_mass()
         attach_targets = None
         attach_stiffness = 0.0
-        if self.attach_enabled and self.attach_stiffness > 0.0:
+        if self.attach_active:
             # Prepared here rather than in __init__ so the restart path -
             # refresh_from_object then _build_solver - honours a toggle
             # flipped since the session was created.
@@ -173,6 +241,7 @@ class MarrowSession:
             attach_stiffness=attach_stiffness,
             attach_targets=attach_targets,
             blend_rows=self.blend_rows,
+            pin_kinematic=self.pin_kinematic,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -223,6 +292,8 @@ class MarrowSession:
         self.friction = float(settings.friction)
         self.attach_enabled = bool(settings.attach_enabled)
         self.attach_stiffness = float(settings.attach_stiffness)
+        self.pin_group = str(settings.pin_group)
+        self.pin_kinematic = bool(settings.pin_follows)
         # The panel holds a multiple of Resolution; the solver wants metres.
         self.resolution = float(settings.resolution)
         thickness = float(settings.self_thickness) * float(settings.resolution)

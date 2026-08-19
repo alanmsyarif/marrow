@@ -130,12 +130,22 @@ def advance(session, frame: int, frame_start: int):
     # change, not wait for a manual trip to the start frame: the mute hides
     # the driving modifiers the instant the box is ticked, so a body that is
     # muted but not yet bone-driven reads as broken.
+    #
+    # The pin settings ride along for a plainer reason - they sit in the same
+    # panel box as Attachment, so leaving them out made one checkbox take
+    # effect at once and the checkbox under it silently do nothing until the
+    # timeline was scrubbed back. Measured: Follows Animation ticked at frame
+    # 15, played on to 24, solver still running the old flag. Both of these
+    # change what _build_solver produces, which is the same reason Attachment
+    # qualifies.
     for m in members:
         obj = bpy.data.objects.get(m.object_name)
         settings = getattr(obj, "marrow", None) if obj is not None else None
         if settings is not None and (
             bool(settings.attach_enabled) != m.attach_enabled
             or float(settings.attach_stiffness) != m.attach_stiffness
+            or str(settings.pin_group) != m.pin_group
+            or bool(settings.pin_follows) != m.pin_kinematic
         ):
             _restart(members, frame_start)
             break
@@ -197,9 +207,7 @@ def bake_iter(members, frame_start: int, frame_end: int, scene=None):
     """
     members = list(members)
     samples_scene = any(
-        m.collider_objects
-        or (m.attach_enabled and m.attach_stiffness > 0.0)
-        for m in members
+        m.collider_objects or m.attach_active for m in members
     )
     if scene is not None and samples_scene:
         # Rebuilds sample the current frame - collider transforms and the
