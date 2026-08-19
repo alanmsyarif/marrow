@@ -56,6 +56,18 @@ def test_a_non_curve_object_yields_nothing():
     assert polyline_from_curve(bpy.context, mesh_obj).shape == (0, 3)
 
 
+def test_a_curve_with_no_splines_yields_nothing():
+    """Blender hands back None from to_mesh() for an empty curve, and
+    the bake runs after the old cage is gone - so raising here would
+    cost the user the cage as well as the fibers."""
+    _fresh()
+    data = bpy.data.curves.new("empty", type="CURVE")
+    data.dimensions = "3D"
+    obj = bpy.data.objects.new("empty", data)
+    bpy.context.collection.objects.link(obj)
+    assert polyline_from_curve(bpy.context, obj).shape == (0, 3)
+
+
 def test_tetrahedralize_bakes_fibers_when_a_curve_is_set():
     from marrow.blender.session import find_cage
     from marrow.blender.storage import read_fiber

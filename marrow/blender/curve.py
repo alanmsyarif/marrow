@@ -24,6 +24,13 @@ def polyline_from_curve(context, curve_obj) -> np.ndarray:
     depsgraph = context.evaluated_depsgraph_get()
     evaluated = curve_obj.evaluated_get(depsgraph)
     mesh = evaluated.to_mesh()
+    # None for a curve datablock with no splines - deleting every
+    # control point in edit mode is enough. Reading .vertices off that
+    # raises from inside Tetrahedralize, after the old cage has been
+    # removed and before the new one is linked, which costs the user a
+    # whole cage rebuild for an empty curve.
+    if mesh is None:
+        return np.zeros((0, 3), dtype=np.float64)
     try:
         count = len(mesh.vertices)
         if count < 2:
