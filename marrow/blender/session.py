@@ -14,7 +14,7 @@ limit.
 import numpy as np
 from mathutils import Matrix
 
-from ..blender.storage import TETS_KEY, read_bind, read_blend, read_tetmesh
+from ..blender.storage import TETS_KEY, read_bind, read_blend, read_fiber, read_tetmesh
 from ..core.solver_ref import SolverParams
 from ..core.tetmesh import MASS_DENSITY, node_volumes
 from ..gpu.solver import GPUSolver, MarrowNaNError
@@ -105,6 +105,10 @@ class MarrowSession:
         # None on a uniform cage - the solver then allocates nothing for the
         # blend pass and stays bit-identical to before adaptive existed.
         self.blend_rows = read_blend(cage_obj.data)
+        # None on a cage tetrahedralized without a fiber curve. The solver
+        # allocates a blank row per tet either way, so the fiber pass is
+        # dead rather than absent.
+        self.fiber = read_fiber(cage_obj.data)
         self.bind_idx, self.bind_w = read_bind(obj.data)
         self._build_solver()
 
@@ -242,6 +246,7 @@ class MarrowSession:
             attach_targets=attach_targets,
             blend_rows=self.blend_rows,
             pin_kinematic=self.pin_kinematic,
+            fiber=self.fiber,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -277,12 +282,13 @@ class MarrowSession:
             return
         settings = obj.marrow
 
-        self.params = SolverParams(
-            substeps=int(settings.substeps),
-            mu=float(settings.stiffness),
-            lam=float(settings.volume_preservation),
-            damping=float(settings.damping),
-        )
+        from .ops import _params_from, collider_objects_of
+
+        # The bake path builds its params through _params_from directly, so
+        # reading the sliders a second time here would be a copy to keep in
+        # step - and the two silently diverging is how a setting ends up
+        # working live and not in a bake.
+        self.params = _params_from(settings)
         self.ground_z = float(settings.ground_z)
         self.ground_on = bool(settings.ground_enabled)
         self.tear_threshold = (
@@ -299,8 +305,6 @@ class MarrowSession:
         thickness = float(settings.self_thickness) * float(settings.resolution)
         self.self_distance = thickness if settings.self_collision else 0.0
         self.body_distance = thickness if settings.body_collision else 0.0
-        from .ops import collider_objects_of
-
         self.collider_objects = collider_objects_of(obj)
 
     def _check_live(self) -> None:

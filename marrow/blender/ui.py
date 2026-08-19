@@ -106,6 +106,18 @@ def _update_attach(self, context):
     attach.mute_modifiers(self.id_data, self.attach_enabled)
 
 
+def _poll_curve(self, obj):
+    """Only Curve objects belong in the fiber slot.
+
+    This filters what the picker offers, which is the only way a user sets
+    the slot by hand. It is not enforcement: Blender does not run a pointer
+    poll on assignment from script, so a mesh set that way still lands here
+    - the bake declines it instead, because polyline_from_curve yields
+    nothing for anything that is not a curve.
+    """
+    return obj.type == "CURVE"
+
+
 class MarrowSettings(bpy.types.PropertyGroup):
     resolution: bpy.props.FloatProperty(
         name="Resolution",
@@ -342,6 +354,71 @@ class MarrowSettings(bpy.types.PropertyGroup):
         default="OFF",
         update=_update_false_color,
     )
+    fiber_enabled: bpy.props.BoolProperty(
+        name="Fiber",
+        description=(
+            "Contract along fiber directions baked from a curve. Needs a "
+            "cage tetrahedralized with a Curve set below"
+        ),
+        default=False,
+    )
+    fiber_curve: bpy.props.PointerProperty(
+        name="Curve",
+        type=bpy.types.Object,
+        poll=_poll_curve,
+        description=(
+            "Curve running along the body. Its tangent is the fiber "
+            "direction and its arclength is the wave phase. Sampled once at "
+            "Tetrahedralize, so changing it means tetrahedralizing again"
+        ),
+    )
+    fiber_stiffness: bpy.props.FloatProperty(
+        name="Fiber Stiffness",
+        description="Resistance to stretch along the fiber, and how hard it pulls",
+        default=1.0e4,
+        min=0.0,
+        soft_max=1.0e6,
+    )
+    wave_amplitude: bpy.props.FloatProperty(
+        name="Amplitude",
+        description=(
+            "Peak contraction. 0.3 shortens to 70% of rest length at the "
+            "crest of the wave"
+        ),
+        default=0.3,
+        min=0.0,
+        max=0.9,
+    )
+    wave_length: bpy.props.FloatProperty(
+        name="Wavelength",
+        description="Distance between crests, measured along the curve",
+        default=1.0,
+        # A hard minimum, not a soft one: both the oracle and the kernel
+        # divide by this without guarding it, deliberately, so the two stay
+        # identical. This is what keeps zero out of the solver.
+        min=1.0e-4,
+        soft_max=10.0,
+        unit="LENGTH",
+    )
+    wave_speed: bpy.props.FloatProperty(
+        name="Speed",
+        description=(
+            "Cycles per second. The wave travels at Wavelength x Speed in "
+            "world units per second; negative reverses it"
+        ),
+        default=1.0,
+        soft_min=-10.0,
+        soft_max=10.0,
+    )
+    waveform: bpy.props.EnumProperty(
+        name="Waveform",
+        description="Shape of the contraction pulse",
+        items=[
+            ("SMOOTH", "Smooth", "Cosine. Organic muscle"),
+            ("SQUARE", "Square", "Hard on and off"),
+        ],
+        default="SMOOTH",
+    )
 
 
 class MARROW_PT_panel(bpy.types.Panel):
@@ -420,6 +497,28 @@ class MARROW_PT_panel(bpy.types.Panel):
         row = pin.row()
         row.enabled = settings.attach_enabled
         row.prop(settings, "pin_follows")
+
+        # Below the elastic settings because fiber is a material term like
+        # them, and above the contact boxes because it is not contact.
+        fiber = sim.box()
+        fiber.prop(settings, "fiber_enabled")
+        column = fiber.column()
+        column.enabled = settings.fiber_enabled
+        column.prop(settings, "fiber_curve")
+
+        from .storage import read_fiber
+
+        cage_obj = find_cage(obj)
+        if read_fiber(cage_obj.data) is None:
+            # The curve is baked at Tetrahedralize, so setting it here does
+            # nothing on its own. Say that rather than let it look broken.
+            column.label(text="Tetrahedralize to bake fibers", icon="INFO")
+        else:
+            column.prop(settings, "fiber_stiffness")
+            column.prop(settings, "wave_amplitude")
+            column.prop(settings, "wave_length")
+            column.prop(settings, "wave_speed")
+            column.prop(settings, "waveform")
 
         contact = sim.box()
         contact.prop(settings, "self_collision")
