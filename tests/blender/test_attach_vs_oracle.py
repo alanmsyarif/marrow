@@ -19,7 +19,7 @@ gpu.init()
 TOL = 2e-6  # float32, one diagonal projection on a unit-scale cage
 
 
-def _run_attach(state, targets, compliance, h):
+def _run_attach(state, targets, compliance, h, kinematic=0, drive_free=1):
     shader = build("attach", ATTACH_SRC, ATTACH_IMAGES, ATTACH_PUSH)
     tex_p = upload(pack_nodes(state.predicted, state.inv_mass))
     tex_t = upload(pack_nodes(np.asarray(targets), np.zeros(targets.shape[0])))
@@ -30,6 +30,12 @@ def _run_attach(state, targets, compliance, h):
     shader.uniform_float("h", h)
     shader.uniform_float("compliance", compliance)
     shader.uniform_int("n_nodes", state.predicted.shape[0])
+    # Static pins, and the free material pulled as usual. Both uniforms are
+    # declared in ATTACH_PUSH, so leaving either unset hands the kernel
+    # whatever was in the push block - measured, drive_free read 0 and every
+    # free node was skipped.
+    shader.uniform_int("kinematic", int(kinematic))
+    shader.uniform_int("drive_free", int(drive_free))
     gpu.compute.dispatch(shader, (state.predicted.shape[0] + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)

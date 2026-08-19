@@ -39,6 +39,9 @@ class _Layout:
     def prop(self, data, name, **kwargs):
         self.drawn.append(("prop", name))
 
+    def prop_search(self, data, name, search_data, search_property, **kwargs):
+        self.drawn.append(("prop_search", name))
+
     def operator(self, idname, **kwargs):
         self.drawn.append(("operator", idname))
 
@@ -112,6 +115,8 @@ def test_a_tetrahedralized_body_shows_the_simulation_settings():
     assert ("label", "Display") in drawn
     assert ("prop", "substeps") in drawn
     assert ("prop", "collider_collection") in drawn
+    assert ("prop_search", "pin_group") in drawn
+    assert ("prop", "pin_follows") in drawn
     assert ("operator", "marrow.bake") in drawn
     assert ("operator", "marrow.detetrahedralize") in drawn
 

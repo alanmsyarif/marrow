@@ -327,3 +327,56 @@ def test_a_failing_live_frame_stops_live_instead_of_raising_every_frame():
         assert session.live is False, "a live failure must disable live mode"
     finally:
         handlers.unregister_handler()
+
+
+def test_ticking_follows_animation_rebuilds_without_a_trip_to_the_start():
+    """Attachment and Follows Animation sit in the same panel box, and
+    Attachment already rebuilds the instant it is ticked. Leaving the pin
+    settings out of that check makes one checkbox take effect immediately
+    and its neighbour silently do nothing until the timeline is scrubbed
+    back - which reads as the feature being broken. Measured: ticked at
+    frame 15, played on to 24, and the solver was still running with the
+    old flag.
+    """
+    obj = _cube()
+    obj.vertex_groups.new(name="Pin").add(
+        [v.index for v in obj.data.vertices if v.co.z > 0.9], 1.0, "REPLACE"
+    )
+    obj.marrow.pin_group = "Pin"
+    obj.marrow.attach_enabled = True
+    obj.marrow.attach_stiffness = 0.5
+    scene = bpy.context.scene
+    try:
+        for frame in range(1, 6):
+            scene.frame_set(frame)
+        session = handlers.SESSIONS[obj.name]
+        assert session.solver.pin_kinematic is False
+
+        obj.marrow.pin_follows = True
+        scene.frame_set(6)
+        assert handlers.SESSIONS[obj.name].solver.pin_kinematic is True, (
+            "ticking Follows Animation mid-play did not rebuild the solver"
+        )
+    finally:
+        handlers.free_all()
+
+
+def test_changing_the_pin_group_rebuilds_without_a_trip_to_the_start():
+    obj = _cube()
+    obj.vertex_groups.new(name="Pin").add(
+        [v.index for v in obj.data.vertices if v.co.z > 0.9], 1.0, "REPLACE"
+    )
+    scene = bpy.context.scene
+    try:
+        for frame in range(1, 6):
+            scene.frame_set(frame)
+        session = handlers.SESSIONS[obj.name]
+        assert not (session.inv_mass == 0.0).any()
+
+        obj.marrow.pin_group = "Pin"
+        scene.frame_set(6)
+        assert (handlers.SESSIONS[obj.name].inv_mass == 0.0).any(), (
+            "setting a Pin Group mid-play pinned nothing"
+        )
+    finally:
+        handlers.free_all()

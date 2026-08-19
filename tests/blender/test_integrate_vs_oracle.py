@@ -18,10 +18,10 @@ IMAGES = [
     ("R32F", "FLOAT_2D", "mark", {"READ"}),
 ]
 PUSH = [("FLOAT", "h"), ("FLOAT", "damping"), ("INT", "n_nodes"),
-        ("FLOAT", "max_vel")]
+        ("FLOAT", "max_vel"), ("INT", "kinematic")]
 
 
-def _run_integrate(state, predicted, h, damping):
+def _run_integrate(state, predicted, h, damping, kinematic=0):
     n = state.nodes.shape[0]
     shader = build("integrate", INTEGRATE_SRC, IMAGES, PUSH)
 
@@ -41,6 +41,10 @@ def _run_integrate(state, predicted, h, damping):
     shader.uniform_int("n_nodes", n)
     # The oracle has no velocity clamp; keep it disabled so the two agree.
     shader.uniform_float("max_vel", 0.0)
+    # Static pins by default: the integrator refuses to move a pinned node
+    # whatever p says. 1 makes it a pass-through for them, which is what a
+    # pin driven by the animation needs.
+    shader.uniform_int("kinematic", int(kinematic))
     gpu.compute.dispatch(shader, (n + 63) // 64, 1, 1)
 
     sync = make_flush_shader("RGBA32F")
@@ -88,4 +92,21 @@ def test_integrate_leaves_pinned_nodes_alone():
 
     gpu_x, gpu_v = _run_integrate(state, predicted, h, 1.0)
     assert np.allclose(gpu_x[pinned], CUBE.nodes[pinned], atol=TOL)
+    assert np.allclose(gpu_v[pinned], 0.0, atol=TOL)
+
+
+def test_integrate_carries_a_kinematic_pin_through():
+    """The other half of the guard above. A pin driven by the animation has
+    its target written into p by the attachment pass, so the integrator has
+    to let that through - otherwise it is discarded every substep and the
+    pin never moves. It still gains no velocity: it is driven, not
+    simulated, and predict reads no velocity for a pinned node.
+    """
+    h = 1 / 240
+    pinned = np.array([2], dtype=np.int32)
+    state = make_state(CUBE.nodes, pinned=pinned)
+    predicted = CUBE.nodes + 0.5
+
+    gpu_x, gpu_v = _run_integrate(state, predicted, h, 1.0, kinematic=1)
+    assert np.allclose(gpu_x[pinned], predicted[pinned], atol=TOL)
     assert np.allclose(gpu_v[pinned], 0.0, atol=TOL)
