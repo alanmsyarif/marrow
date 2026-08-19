@@ -6,6 +6,7 @@ import bpy
 import numpy as np
 
 from ..blender import false_color, group, handlers
+from ..blender.curve import polyline_from_curve
 from ..blender.inside_bvh import cell_mask_iter, cell_oracle_from_object
 from ..blender import session as session_mod
 from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
@@ -16,12 +17,14 @@ from ..blender.storage import (
     restore_rest,
     write_bind,
     write_blend,
+    write_fiber,
     write_rest,
     write_tetmesh,
 )
 from ..core.adaptive import build_adaptive_lattice
 from ..core.bind import bind_points_iter
 from ..core.coloring import color_sets_iter
+from ..core.fiber import fiber_from_polyline, tet_centroids
 from ..core.lattice import build_lattice
 from ..core.progress import drain
 from ..core.solver_ref import SolverParams
@@ -235,6 +238,21 @@ def _tetrahedralize_iter(context, obj):
     write_tetmesh(cage_mesh, tetmesh, colors)
     if blend_rows is not None:
         write_blend(cage_mesh, *blend_rows)
+
+    # Fibers are baked here and frozen. The direction is rest-space, because
+    # the constraint measures F a and F maps rest to world, so an animated
+    # curve would have no meaning as a source. Changing the curve means
+    # tetrahedralizing again, and the panel says so.
+    #
+    # Sampled in world space: that is the space tetmesh.nodes are in, and
+    # therefore the space dm_inv is built from.
+    spine = polyline_from_curve(context, obj.marrow.fiber_curve)
+    if spine.shape[0] >= 2:
+        write_fiber(
+            cage_mesh,
+            fiber_from_polyline(spine, tet_centroids(tetmesh.nodes, tetmesh.tets)),
+        )
+
     cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
     context.collection.objects.link(cage_obj)
     cage_obj.parent = obj
@@ -442,12 +460,26 @@ def session_for(obj) -> MarrowSession:
 
 
 def _params_from(settings) -> SolverParams:
-    """Map the panel sliders onto the solver's parameters."""
+    """Map the panel sliders onto the solver's parameters.
+
+    Both session paths come through here - Bake builds params up front in
+    session_for, Live re-reads them in refresh_from_object - so a setting
+    added in one place reaches the other for free.
+    """
     return SolverParams(
         substeps=int(settings.substeps),
         mu=float(settings.stiffness),
         lam=float(settings.volume_preservation),
         damping=float(settings.damping),
+        # Zero when the toggle is off, so the kernel branch goes dead
+        # rather than the pass being conditionally dispatched.
+        fiber_k=(
+            float(settings.fiber_stiffness) if settings.fiber_enabled else 0.0
+        ),
+        wave_amp=float(settings.wave_amplitude),
+        wave_len=float(settings.wave_length),
+        wave_speed=float(settings.wave_speed),
+        waveform=0 if settings.waveform == "SMOOTH" else 1,
     )
 
 
