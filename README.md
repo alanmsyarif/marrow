@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.0.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.4.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -80,6 +80,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
 | **Attachment** | An armature or other deforming modifiers drive the sim from the inside. See [Attachment](#attachment). |
 | **Attach Stiffness** | How hard the flesh follows the animation. 1.0 rides it exactly; lower lags, jiggles and overshoots. |
+| **Pin Group** | Vertex group whose weight holds material in place. 1.0 pins solid; below that is a heavier node, not a partial hold. See [Pinning](#pinning). |
+| **Follows Animation** | Let the pinned region ride the animation instead of staying put. Still rigid. Needs Attachment. See [Pinning](#pinning). |
 | **Colliders** | The collection of objects this body collides against. Shape, Sticky and Friction are set on each object. |
 | **Stick Break** | How far material may drag a sticky contact before it lets go. 0 never lets go. |
 | **False Color** | Off / Stretch rainbow display of how far the material is stretched. See [False color](#false-color). |
@@ -193,6 +195,52 @@ Contacts keep the last word: the attachment pull runs before collision, so a gro
 
 Attachment needs the object to keep its vertex count: the weight table is per base vertex, which is why count-changing modifiers are kept out of the targets and left on the display only. Weights are synthesized once against the rest shape, in object space, so moving or rotating the object afterwards cannot scramble them; like the rest of Marrow the simulation itself stays in the world frame it was tetrahedralized in. Tetrahedralize fills the cage from the modelled shape whichever frame it runs on - the capture parks the modifier stack, so a pose playing at tet time cannot wedge the posed silhouette between the lattice and the bind. Editing the mesh needs a re-tetrahedralize, same rule as the bind data.
 
+### Pinning
+
+**Pin Group** holds material in place. Point it at a vertex group on the object and paint that group wherever the body must not move; weight 1.0 is a solid pin.
+
+The group is painted on the render mesh, because that is the geometry you can see and select - cage nodes are interior lattice points and carry no vertex groups of their own. Each node reads the group through the same k-nearest-vertex map the attachment pass uses, so a node is held exactly when the surface around it is, and pinning works whether or not Attachment is on.
+
+A pin is zero inverse mass, and every pass in the solver already defers to it. Predict skips the gravity step, integrate holds the position and the velocity both, and the collider and attachment kernels each check it first: a pin outranks a collider, and a pin outranks the armature. Nothing pushes a pinned node anywhere.
+
+**A weight below 1.0 is not a partial hold.** It scales inverse mass, so 0.5 is a node with twice the mass, not a node half held - gravity is an acceleration, so a heavy node still falls at g. What the falloff buys is the boundary. The blend across the edge of a painted region makes the transition nodes progressively heavier instead of dropping a hard mass discontinuity into the middle of the material, which shows as a stress ring. Paint the region you want held at a solid 1.0 and let the blend feather the edge.
+
+Pins anchor in the world frame the body was tetrahedralized in - the same rule as the bind and attachment data - so moving the object afterwards does not drag the pin along with it. That is the point on an animated character: a pinned foot stays nailed where it was while the rest of the body is free to be driven. Changing the Pin Group or Follows Animation mid-simulation takes effect on the next frame, the same as Attachment - all three change what the solver is built from. Repainting weights *inside* a group that is already selected does not: the setting itself has not changed, so nothing knows to rebuild. Return to the start frame in Live, or Free and bake again after a Bake.
+
+**A pin holds; Attachment carries it.** By default a pin is a *static* anchor, so hooking a pinned region to an Empty and moving it does nothing - the pin is exactly what the solver holds still, and the attachment kernel skips a node with no inverse mass. Tick **Follows Animation** and the pin rides the animation instead: still rigid, still outranking every collider, but driven rather than frozen.
+
+Measured on a cube whose top face is hooked to an Empty moved 3.0 in X, tracking how far the cage top and bottom travel:
+
+| Setup | Top follows | Bottom |
+|---|---|---|
+| Pin Group only, no Attachment | -0.004 | 0.102 |
+| Attachment 0.5, no pin | 2.600 | 0.929 |
+| Pin + Attachment, Follows Animation **off** | 0.240 | 0.092 |
+| Pin + Attachment, Follows Animation **on** | **2.874** | 0.815 |
+
+Row 4 is the shape you usually want: the pinned region tracks the hook almost exactly while the rest of the body lags and jiggles behind it. Row 3 is the trap - a static pin and Attachment fight each other, and the pin wins, dragging the whole thing back.
+
+**Set Attach Stiffness to 0 to let a driven pin carry the body.** This is the setting the mode is built for, and it is worth understanding why. Attachment aims *every* node at its evaluated position, and for material the animation does not reach, that aim is the rest pose - so the same pass that supplies a pin its target is otherwise nailing the rest of the body down. At 0 the pass runs for the pins alone and leaves the free material entirely to the simulation.
+
+Measured on a 23,697-node cage, a 27-vertex painted region hooked to an Empty travelling 1.473:
+
+| Attach Stiffness | Pin travel | Body travel |
+|---|---|---|
+| 0.50 | 1.473 | 0.026 |
+| 0.05 | 1.473 | 0.040 |
+| 0.01 | 1.473 | 0.374 |
+| **0.00 (pins only)** | 1.473 | **1.552** |
+
+The pin tracks perfectly at every setting. What changes is whether the body comes with it - and nothing about mass, gravity, ground contact or material Stiffness was ever the limit; releasing the attachment grip was the whole of it. A high Attach Stiffness also switches the physics off entirely: at 1.0 the pass hard-snaps every node to its evaluated position after the elastic solve, so Marrow just replays the modifier stack and Stiffness stops mattering - measured identical body travel to three decimals across a 400x change in it.
+
+Use a stiffness above 0 only when you want the *whole* body to follow the animation with soft-body lag, which is what Attachment is for on its own. Mixing that with a driven pin fights itself.
+
+**Follows Animation needs Attachment on**, because the attachment pass is where per-node targets come from; the checkbox greys out otherwise. Targets are sampled once per frame, the same treatment collider transforms get, so a driven pin reaches the frame's position on the first substep and holds. That is the same front-loading Attachment at stiffness 1.0 already applies to every node in the body.
+
+Leave Follows Animation **off** to nail a region in world space while an armature drives the rest - a foot planted on the floor while the body moves over it. That is the case the flag exists to preserve.
+
+One more reason to turn Attachment on here: modifiers are only muted in the display while Attachment is on. With a pin alone, a Hook or Armature stays shown, so Marrow writes the simulation into the mesh and the modifier then bends that result a second time. The stretched spike this produces is display only - the simulation underneath is unharmed.
+
 ### Ground plane
 
 A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.
@@ -235,7 +283,6 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Contact is node against node only.** No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Collision against a *collider* is a distance field and does not have this limit.
 - **A deforming collider is baked once**, and features thinner than one SDF cell are missed. See [Colliders](#colliders).
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
-- **No pinning yet.** The solver supports it (zero inverse mass) but nothing exposes it. A sticky collider is the only way to hold material in place today.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
 - **No plasticity, anisotropy or per-region materials.**
@@ -259,7 +306,7 @@ Core geometry and solver maths live in `marrow/core/` and never import `bpy`, wh
 blender -b --factory-startup --python tests/blender/run_tests.py
 ```
 
-**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 208 tests and they all pass on 5.2.
+**Run the Blender suite on 5.2, and check which binary you invoked.** Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with `GPU functions for drawing are not available in background mode`, and a windowed 4.5 driven by `--python` at startup fails each readback with `StaleReadError: a RGBA32F upload never became visible`. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose. The suite is 254 tests on 5.2. A full run occasionally reports a few failures that pass when their module is run alone, and the failing set changes between runs - see [A note on GPU reliability](#a-note-on-gpu-reliability). Re-run before reading a red full run as a regression.
 
 Running a single module rather than `run_tests.py` needs a `gpu.init()` of your own first: 5.2 requires it, and several modules rely on some earlier module in the full run having already called it.
 
