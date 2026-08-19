@@ -60,14 +60,28 @@ def fiber_from_polyline(points: np.ndarray, centroids: np.ndarray) -> np.ndarray
     lengths, cumulative = lengths[keep], cumulative[keep]
     tangents = deltas / lengths[:, None]
 
-    # (T, S) closest approach of every centroid to every segment.
-    rel = centroids[:, None, :] - starts[None, :, :]
-    t = np.einsum("tsc,sc->ts", rel, deltas) / (lengths * lengths)[None, :]
-    t = np.clip(t, 0.0, 1.0)
-    nearest = starts[None, :, :] + t[:, :, None] * deltas[None, :, :]
-    pick = np.argmin(np.linalg.norm(centroids[:, None, :] - nearest, axis=2), axis=1)
+    # Closest approach of every centroid to every segment, as a running
+    # minimum over segments rather than a dense (T, S, 3) stack. The dense
+    # form peaks at ~96 bytes per (tet, segment) pair - 118k tets against a
+    # 300-point spine is 3.4GB - and the loop is over S, the small axis, so
+    # the vectorised work per pass is still the whole tet array.
+    #
+    # Strictly `<` against the running best, never `<=`: that reproduces
+    # np.argmin's lowest-index tie-break, which is what keeps the segment
+    # either side of a duplicate control point from swapping the winner.
+    best = np.full(centroids.shape[0], np.inf)
+    pick = np.zeros(centroids.shape[0], dtype=np.int64)
+    t_best = np.zeros(centroids.shape[0])
+    for s in range(starts.shape[0]):
+        # einsum, not `@` or (a * b).sum(): only einsum sums the three
+        # components in the order the dense form did, and only then is the
+        # result bit-for-bit what this function returned before.
+        proj = np.einsum("tc,c->t", centroids - starts[s], deltas[s])
+        t = np.clip(proj / (lengths[s] * lengths[s]), 0.0, 1.0)
+        d = np.linalg.norm(centroids - (starts[s] + t[:, None] * deltas[s]), axis=1)
+        m = d < best
+        best[m], pick[m], t_best[m] = d[m], s, t[m]
 
-    rows = np.arange(centroids.shape[0])
     out[:, :3] = tangents[pick]
-    out[:, 3] = cumulative[pick] + t[rows, pick] * lengths[pick]
+    out[:, 3] = cumulative[pick] + t_best * lengths[pick]
     return out

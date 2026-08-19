@@ -231,14 +231,6 @@ def _tetrahedralize_iter(context, obj):
             m.show_viewport = state
         context.view_layer.update()
 
-    cage_name = f"{obj.name}{CAGE_SUFFIX}"
-    remove_cage(obj)
-
-    cage_mesh = bpy.data.meshes.new(cage_name)
-    write_tetmesh(cage_mesh, tetmesh, colors)
-    if blend_rows is not None:
-        write_blend(cage_mesh, *blend_rows)
-
     # Fibers are baked here and frozen. The direction is rest-space, because
     # the constraint measures F a and F maps rest to world, so an animated
     # curve would have no meaning as a source. Changing the curve means
@@ -246,12 +238,28 @@ def _tetrahedralize_iter(context, obj):
     #
     # Sampled in world space: that is the space tetmesh.nodes are in, and
     # therefore the space dm_inv is built from.
+    #
+    # Computed BEFORE remove_cage, written after. Curve evaluation depends
+    # on nothing remove_cage touches, and putting it here means a raise in
+    # it - an empty curve, a shape nobody anticipated - costs the user the
+    # fibers and nothing else, instead of the cage that was already deleted.
+    # It also reads the depsgraph before an object deletion invalidates it.
     spine = polyline_from_curve(context, obj.marrow.fiber_curve)
-    if spine.shape[0] >= 2:
-        write_fiber(
-            cage_mesh,
-            fiber_from_polyline(spine, tet_centroids(tetmesh.nodes, tetmesh.tets)),
-        )
+    fiber_rows = (
+        fiber_from_polyline(spine, tet_centroids(tetmesh.nodes, tetmesh.tets))
+        if spine.shape[0] >= 2
+        else None
+    )
+
+    cage_name = f"{obj.name}{CAGE_SUFFIX}"
+    remove_cage(obj)
+
+    cage_mesh = bpy.data.meshes.new(cage_name)
+    write_tetmesh(cage_mesh, tetmesh, colors)
+    if blend_rows is not None:
+        write_blend(cage_mesh, *blend_rows)
+    if fiber_rows is not None:
+        write_fiber(cage_mesh, fiber_rows)
 
     cage_obj = bpy.data.objects.new(cage_name, cage_mesh)
     context.collection.objects.link(cage_obj)
