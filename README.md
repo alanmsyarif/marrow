@@ -72,6 +72,13 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Stiffness** | Resistance to distortion (deviatoric compliance). |
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
+| **Fiber** | Contract along baked fiber directions. See [Fiber](#fiber). |
+| **Curve** | Curve running along the body. Its tangent is the fiber direction, its arclength the wave phase. |
+| **Fiber Stiffness** | Resistance to stretch along the fiber, and how hard it pulls. |
+| **Amplitude** | Peak contraction. 0.3 shortens to 70% of rest length. |
+| **Wavelength** | Distance between crests, along the curve. Floored at 1e-4 - both the oracle and the kernel divide by it unguarded, so this is not a soft suggestion. |
+| **Speed** | Cycles per second. Travel velocity is Wavelength x Speed. |
+| **Waveform** | Smooth cosine, or hard on/off square. |
 | **Friction** | Resistance to sliding, for the ground plane, self-collision and body-to-body contact. 0 slides freely. Colliders carry their own value instead. See [Friction](#friction). |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
 | **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
@@ -149,6 +156,22 @@ Two things a torn tet still does:
 - **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
 **Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. Stick Break does not substitute: it measures how far a contact point *drags across the collider*, which barely moves in a straight pull, so a stretch that should snap keeps stretching. If a stretch shot smears instead of separating, switch Tearing on.
+
+### Fiber
+
+Every tet in Marrow is otherwise isotropic: it resists distortion equally in all directions. **Fiber** adds one direction that is different, and drives it - the tet is told to shorten along its fiber, and the volume-preservation constraint puts the material it displaces out sideways. That sideways bulge is what makes it read as a muscle instead of a shrinking rod.
+
+Directions come from a **Curve** you point at the body. Each tet takes the tangent at the nearest point on that curve as its fiber direction, and the arclength at that point as its place in the wave, so the contraction travels from one end of the body to the other instead of the whole thing pulsing at once. Both are sampled at Tetrahedralize and frozen - a fiber direction is a property of the rest shape, so an animated curve has no meaning as a source. Change the curve and tetrahedralize again.
+
+**Setting the curve takes two Tetrahedralize passes.** The Curve field lives below the "Tetrahedralize to simulate" gate, so it does not exist until the object already has a cage. The flow is Tetrahedralize, then set Curve, then Tetrahedralize again - the first pass only builds the cage the field needs to appear on, and the second is the one that samples the curve and bakes fibers.
+
+**A bevelled or cyclic curve bakes no fibers, and says nothing about it.** The curve is evaluated to a polyline that must resolve to one open path: a bevel or extrude turns it into a tube, a cyclic curve into a ring, and neither has an unambiguous direction to hand a fiber. Either one bakes nothing, silently - the panel keeps reading "Tetrahedralize to bake fibers" exactly as if no curve had been set at all. If fibers refuse to bake, check the curve for a bevel or `Cyclic U` before looking anywhere else.
+
+The wave itself is procedural, not keyframed. **Wavelength** and **Speed** set its shape and how fast it travels: the crest moves at Wavelength x Speed in world units per second, and a negative Speed sends it the other way. **Amplitude** is how hard it squeezes - 0.3 shortens a fiber to 70% of its rest length at the crest. **Waveform** picks a smooth cosine or a hard on/off square.
+
+Contraction alone moves nothing. Locomotion is contraction plus grip, so a crawling body needs [Friction](#friction) above zero and something to push against - `tools/fiber_demo.py` builds a working scene to start from.
+
+A torn tet loses its fiber along with its stiffness. Torn muscle does not pull.
 
 ### Self collision
 
@@ -285,7 +308,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
-- **No plasticity, anisotropy or per-region materials.**
+- **No plasticity or per-region materials.** Fiber adds anisotropy along one baked direction; `mu` and `lam` are still global.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.
 
