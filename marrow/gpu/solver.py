@@ -29,6 +29,7 @@ from ..core.layout import (
     color_order,
     color_ordered,
     pack_blend,
+    pack_fiber,
     pack_nodes,
     pack_rest,
     pack_scalar,
@@ -81,7 +82,7 @@ class GPUSolver:
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_stiffness=0.0, attach_targets=None, blend_rows=None,
-                 pin_kinematic=False):
+                 pin_kinematic=False, fiber=None):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -167,6 +168,22 @@ class GPUSolver:
         self.tex_rest = upload_verified(pack_rest(dm_inv, rest_vol))
         # Unpermuted, for the skin kernel's bind indices.
         self.tex_tets_orig = upload_verified(pack_tets(mesh.tets))
+        # Fiber rows arrive in mesh tet order and must ride the same colour
+        # permutation the tets did, or every tet contracts along its
+        # neighbour's direction. Always allocated, even with no fibers: the
+        # kernel needs every image bound, and a blank one reads as "no tet
+        # has a fiber" at the cost of one texel per tet.
+        if fiber is None:
+            fiber_rows = np.zeros((mesh.n_tets, 4), dtype=np.float64)
+        else:
+            fiber_rows = np.asarray(fiber, dtype=np.float64)[self._tet_order]
+        self.tex_fiber = upload_verified(pack_fiber(fiber_rows))
+
+        # Seconds of simulated time, for the fiber wave. Per substep, not
+        # per frame - a per-frame clock steps the wave in visible stairs at
+        # low substep counts. Reset by a live restart, which rebuilds this
+        # object outright.
+        self.sim_time = 0.0
         # One flag per tet. Zero means intact; set once, never cleared.
         self.tex_torn = blank(mesh.n_tets, fmt="R32F")
         # One flag per node: set by the contact passes when a node received a
@@ -265,10 +282,14 @@ class GPUSolver:
              ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
              ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
              ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
-             ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"})],
+             ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
+             ("RGBA32F", "FLOAT_2D", "fiber", {"READ"})],
             [("FLOAT", "h"), ("FLOAT", "mu"), ("FLOAT", "lam"),
              ("FLOAT", "tear_threshold"),
-             ("INT", "color_begin"), ("INT", "color_end")],
+             ("INT", "color_begin"), ("INT", "color_end"),
+             ("FLOAT", "fiber_k"), ("FLOAT", "wave_amp"),
+             ("FLOAT", "wave_len"), ("FLOAT", "wave_speed"),
+             ("FLOAT", "wave_time"), ("INT", "waveform")],
         )
         self.sh_collide = kernels.build(
             "collide", kernels.COLLIDE_SRC,
@@ -431,12 +452,19 @@ class GPUSolver:
             self.sh_solve.image("rest", self.tex_rest)
             self.sh_solve.image("torn", self.tex_torn)
             self.sh_solve.image("live", self.tex_live)
+            self.sh_solve.image("fiber", self.tex_fiber)
             self.sh_solve.uniform_float("h", h)
             self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
             self.sh_solve.uniform_float("mu", self.params.mu)
             self.sh_solve.uniform_float("lam", self.params.lam)
             self.sh_solve.uniform_int("color_begin", begin)
             self.sh_solve.uniform_int("color_end", end)
+            self.sh_solve.uniform_float("fiber_k", self.params.fiber_k)
+            self.sh_solve.uniform_float("wave_amp", self.params.wave_amp)
+            self.sh_solve.uniform_float("wave_len", self.params.wave_len)
+            self.sh_solve.uniform_float("wave_speed", self.params.wave_speed)
+            self.sh_solve.uniform_float("wave_time", self.sim_time)
+            self.sh_solve.uniform_int("waveform", int(self.params.waveform))
             gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
         self._dispatch_blend()
@@ -445,6 +473,9 @@ class GPUSolver:
         for other in others:
             self._dispatch_body_collision(node_groups, other, h)
         self._dispatch_colliders(node_groups)
+
+        # After every dispatch in this substep, so each colour saw one value.
+        self.sim_time += h
 
     def substep_integrate(self, h) -> None:
         """Turn the corrected positions into new positions and velocities."""

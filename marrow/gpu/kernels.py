@@ -97,7 +97,8 @@ void main()
 """
 
 SOLVE_SRC = """
-// Stable neo-Hookean, one deviatoric and one hydrostatic constraint per tet.
+// Stable neo-Hookean, one deviatoric and one hydrostatic constraint per tet,
+// plus an optional anisotropic fiber constraint between the two.
 // Transcribed from marrow/core/solver_ref.py:solve_constraints. The two must
 // stay in step: the oracle is the only way a sign error here is detectable.
 
@@ -244,6 +245,50 @@ void main()
       vec3 g3v = g[2];
       vec3 g0v = -(g1v + g2v + g3v);
       project(idx, g0v, g1v, g2v, g3v, c_dev, 1.0 / (mu * rest_vol), h);
+    }
+  }
+
+  // --- fiber ---
+  // Transversely isotropic term: C = |F a| - s, with a the rest-space fiber
+  // direction and s the activation. s < 1 shortens the tet along a; the
+  // hydrostatic pass below then has to put that volume somewhere, which is
+  // the bulge. A zero direction means this tet was never assigned a fiber.
+  //
+  // Transcribed from solver_ref.solve_constraints and fiber_activation. The
+  // two must stay in step - test_fiber_vs_oracle is what notices if they do
+  // not.
+  //
+  // F is rebuilt from the positions the deviatoric pass just moved, for the
+  // same reason the hydrostatic block below rebuilds it: the stale F would
+  // linearise this constraint about the wrong configuration. Deliberate,
+  // not an oversight, and the oracle recomputes here too.
+  if (fiber_k > 0.0 && !is_torn) {
+    vec4 fb = imageLoad(fiber, texel(t));
+    vec3 a = fb.xyz;
+    if (dot(a, a) > 0.5) {
+      vec3 fp0 = imageLoad(p, texel(idx.x)).xyz;
+      mat3 ff = shape_matrix(idx, fp0) * dm_inv;
+
+      float cycle = fract(fb.w / wave_len - wave_time * wave_speed);
+      // Smooth is muscle; square is the literal (@Frame%10)/10 blink the
+      // technique came from.
+      float pulse = (waveform == 0)
+        ? 0.5 * (1.0 - cos(6.2831853 * cycle))
+        : step(0.5, cycle);
+      float s = 1.0 - wave_amp * pulse;
+
+      vec3 fa = ff * a;
+      float fiber_len = length(fa);
+      if (fiber_len > 1e-12) {
+        mat3 dcdf = outerProduct(fa / fiber_len, a);
+        mat3 g = dcdf * dm_inv_t;
+        vec3 g1v = g[0];
+        vec3 g2v = g[1];
+        vec3 g3v = g[2];
+        vec3 g0v = -(g1v + g2v + g3v);
+        project(idx, g0v, g1v, g2v, g3v, fiber_len - s,
+                1.0 / (fiber_k * rest_vol), h);
+      }
     }
   }
 

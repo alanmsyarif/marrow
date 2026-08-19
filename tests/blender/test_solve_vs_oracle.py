@@ -18,6 +18,10 @@ IMAGES = [
     ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
     ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
     ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
+    # The fiber term is off in this module - test_fiber_vs_oracle owns it -
+    # but every identifier SOLVE_SRC names still has to be declared or the
+    # kernel will not compile.
+    ("RGBA32F", "FLOAT_2D", "fiber", {"READ"}),
 ]
 PUSH = [
     ("FLOAT", "h"),
@@ -26,6 +30,12 @@ PUSH = [
     ("FLOAT", "tear_threshold"),
     ("INT", "color_begin"),
     ("INT", "color_end"),
+    ("FLOAT", "fiber_k"),
+    ("FLOAT", "wave_amp"),
+    ("FLOAT", "wave_len"),
+    ("FLOAT", "wave_speed"),
+    ("FLOAT", "wave_time"),
+    ("INT", "waveform"),
 ]
 
 
@@ -43,6 +53,7 @@ def _run_solve(mesh, state, params, h):
     # Tearing is off for parity, so the counter is never read - but the image
     # still has to be bound for the kernel to run.
     tex_live = blank(mesh.n_nodes, fmt="R32F")
+    tex_fiber = blank(mesh.n_tets)
 
     for c in range(len(offsets) - 1):
         begin, end = int(offsets[c]), int(offsets[c + 1])
@@ -54,12 +65,19 @@ def _run_solve(mesh, state, params, h):
         shader.image("rest", tex_r)
         shader.image("torn", tex_torn)
         shader.image("live", tex_live)
+        shader.image("fiber", tex_fiber)
         shader.uniform_float("h", h)
         shader.uniform_float("tear_threshold", 0.0)  # tearing off for parity
         shader.uniform_float("mu", params.mu)
         shader.uniform_float("lam", params.lam)
         shader.uniform_int("color_begin", begin)
         shader.uniform_int("color_end", end)
+        shader.uniform_float("fiber_k", 0.0)  # off: this is the isotropic gate
+        shader.uniform_float("wave_amp", 0.0)
+        shader.uniform_float("wave_len", 1.0)
+        shader.uniform_float("wave_speed", 0.0)
+        shader.uniform_float("wave_time", 0.0)
+        shader.uniform_int("waveform", 0)
         gpu.compute.dispatch(shader, (end - begin + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)

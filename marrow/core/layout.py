@@ -136,6 +136,19 @@ def pack_rest(dm_inv: np.ndarray, rest_vol: np.ndarray) -> np.ndarray:
     return image
 
 
+def pack_fiber(fiber: np.ndarray) -> np.ndarray:
+    """One texel per tet: rest-space direction in rgb, arclength in a.
+
+    A zero row is not padding to be trimmed - it is the signal that a tet
+    was never assigned a fiber, and the kernel skips it. Which means the
+    blank tail of the image is already correct for a partly-fibered cage.
+    """
+    fiber = np.asarray(fiber, dtype=np.float64)
+    image = _blank(fiber.shape[0])
+    _write(image, fiber.astype(np.float32))
+    return image
+
+
 def unpack_vec3(image: np.ndarray, count: int) -> np.ndarray:
     """First ``count`` texels of an image as (count, 3) float64."""
     flat = np.asarray(image).reshape(-1, 4)

@@ -130,3 +130,15 @@ def test_unpack_vec3_rejects_a_count_the_image_cannot_hold():
     img = pack_nodes(MESH.nodes, np.ones(MESH.n_nodes))
     with pytest.raises(ValueError, match="cannot hold"):
         unpack_vec3(img, TEX_WIDTH * 99)
+
+
+def test_pack_fiber_is_one_texel_per_tet():
+    from marrow.core.layout import pack_fiber
+
+    fiber = np.array([[1.0, 0.0, 0.0, 0.25], [0.0, 1.0, 0.0, 1.75]])
+    image = pack_fiber(fiber)
+    flat = image.reshape(-1, 4)
+    assert image.dtype == np.float32
+    assert np.allclose(flat[0], [1.0, 0.0, 0.0, 0.25])
+    assert np.allclose(flat[1], [0.0, 1.0, 0.0, 1.75])
+    assert np.allclose(flat[2], 0.0), "unused texels must be zero, which reads as no fiber"
