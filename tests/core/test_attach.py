@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from marrow.core.attach import synth_weights, targets_from
+from marrow.core.attach import blend_scalar, synth_weights, targets_from
 
 
 def _grid_verts(n):
@@ -92,3 +92,49 @@ def test_empty_input_round_trips():
     idx, w = synth_weights(np.zeros((0, 3)), VERTS)
     assert idx.shape == (0, 4)
     assert targets_from(idx, w, VERTS).shape == (0, 3)
+
+
+def test_scalar_blend_of_a_uniform_field_is_that_value():
+    """Painting every render vertex must pin every cage node solid.
+
+    The rows are a partition of unity, so the blend of a constant is that
+    constant. Without this an all-1.0 pin group would leave interior nodes
+    partly free and the "hold this still" promise would be a lie.
+    """
+    nodes = np.random.default_rng(11).uniform(0.0, 1.0, (40, 3))
+    idx, w = synth_weights(nodes, VERTS)
+    blended = blend_scalar(idx, w, np.ones(VERTS.shape[0]))
+    assert blended.shape == (40,)
+    assert np.allclose(blended, 1.0, atol=1e-12)
+
+
+def test_scalar_blend_follows_the_painted_region():
+    """A half-painted mesh gives a gradient, not a step.
+
+    Nodes buried in the painted half read 1, nodes in the bare half read 0,
+    and nothing lands outside the painted range - which is what keeps
+    ``1 - w`` a legal inverse-mass scale.
+    """
+    painted = (VERTS[:, 2] > 0.5).astype(np.float64)
+    nodes = np.array([[0.5, 0.5, 1.0], [0.5, 0.5, 0.0]])
+    idx, w = synth_weights(nodes, VERTS)
+    blended = blend_scalar(idx, w, painted)
+    assert blended[0] == 1.0
+    assert blended[1] == 0.0
+
+    spread = np.random.default_rng(5).uniform(0.0, 1.0, (60, 3))
+    idx, w = synth_weights(spread, VERTS)
+    everywhere = blend_scalar(idx, w, painted)
+    assert np.all(everywhere >= 0.0) and np.all(everywhere <= 1.0)
+
+
+def test_scalar_blend_rejects_stale_weights():
+    idx = np.array([[0, 1, 2, 3]], dtype=np.int32)
+    w = np.full((1, 4), 0.25)
+    with pytest.raises(ValueError, match="vertices"):
+        blend_scalar(idx, w, np.zeros(2))
+
+
+def test_scalar_blend_of_no_nodes_is_empty():
+    idx, w = synth_weights(np.zeros((0, 3)), VERTS)
+    assert blend_scalar(idx, w, np.ones(VERTS.shape[0])).shape == (0,)
