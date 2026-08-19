@@ -67,13 +67,16 @@ def precompute(nodes: np.ndarray, tets: np.ndarray):
 
 
 def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
-         targets=None, fiber=None) -> None:
+         targets=None, fiber=None, t0: float = 0.0) -> float:
     """Advance one frame of ``params.substeps`` XPBD substeps, in place.
 
     ``targets``, when given alongside ``params.attach > 0``, are the
     per-node positions the animation wants this frame; the attachment
     pass pulls nodes towards them after the elastic solve, mirroring the
     GPU pass order.
+
+    Returns the advanced clock, so a caller stepping frame after frame can
+    thread it back in as the next frame's ``t0``.
     """
     h = params.dt / params.substeps
     gravity = np.asarray(params.gravity, dtype=np.float64)
@@ -81,9 +84,12 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
 
     # Simulation clock for the fiber wave. Advances per substep, not per
     # frame: a per-frame clock steps the wave in visible stairs at low
-    # substep counts. Local, so a fresh step() sequence always starts at the
-    # same phase - the GPU mirrors this with GPUSolver.sim_time.
-    t = 0.0
+    # substep counts. Starts from ``t0`` rather than always 0, because the
+    # wave must keep travelling across frame boundaries - GPUSolver.sim_time
+    # is the GPU's persistent counterpart, reset only on a live restart, and
+    # a step() that always restarted at 0 would snap the wave back every
+    # frame instead of letting it travel.
+    t = t0
 
     for _ in range(params.substeps):
         # predict
@@ -123,6 +129,8 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
             state.nodes[~movable] = state.predicted[~movable]
 
         t += h
+
+    return t
 
 
 def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
@@ -305,6 +313,21 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
         if fiber_on:
             a = fiber[t_i, :3]
             if float(a @ a) > 0.5:
+                # F is recomputed rather than reused, for the same reason the
+                # hydrostatic block below recomputes it: the deviatoric
+                # projection above has already moved state.predicted, so the
+                # stale F would linearise this constraint about the wrong
+                # configuration. Deliberate, not an oversight.
+                p0 = state.predicted[idx[0]]
+                ds = np.stack(
+                    [
+                        state.predicted[idx[1]] - p0,
+                        state.predicted[idx[2]] - p0,
+                        state.predicted[idx[3]] - p0,
+                    ],
+                    axis=1,
+                )
+                f = ds @ dm_inv[t_i]
                 s = fiber_activation(float(fiber[t_i, 3]), t, params)
                 fa = f @ a
                 fiber_len = float(np.linalg.norm(fa))

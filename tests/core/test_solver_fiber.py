@@ -119,3 +119,78 @@ def test_fiber_alone_still_solves_with_both_stiffnesses_off():
     state.predicted[:] = CUBE.nodes
     solve_constraints(state, CUBE.tets, dm_inv, rest_vol, params, h, fiber=fiber)
     assert not np.array_equal(state.predicted, CUBE.nodes)
+
+
+def test_step_threads_the_clock_across_frames():
+    """step() must return the advanced clock so a caller can pass it back
+    in as the next frame's t0 - otherwise the wave would restart at phase
+    0 every frame and a travelling wave would jitter in place instead of
+    travelling. wave_speed=3.0 moves the phase by 0.125 of a cycle over one
+    default frame (dt=1/24), which is not a whole cycle, so the smooth
+    waveform must read differently at the threaded clock than it would
+    at a clock that had been reset to 0."""
+    dm_inv, rest_vol = precompute(CUBE.nodes, CUBE.tets)
+    fiber = _fibers_along_x(CUBE.n_tets, phase=0.75)
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.5, wave_len=1.0, wave_speed=3.0, waveform=0,
+    )
+    state = make_state(CUBE.nodes)
+
+    t1 = step(state, CUBE.tets, dm_inv, rest_vol, params, fiber=fiber)
+    assert t1 > 0.0, "the clock must advance over a frame"
+
+    # Threading t1 into the next frame continues the wave; a caller that
+    # never threads it would see frame two start from phase 0 again, i.e.
+    # exactly what frame one saw.
+    threaded_activation = fiber_activation(0.75, t1, params)
+    replayed_activation = fiber_activation(0.75, 0.0, params)
+    assert abs(threaded_activation - replayed_activation) > 1e-6, (
+        "a threaded second frame must see a different activation than a "
+        "frame whose clock was reset to 0"
+    )
+
+    # The plumbing itself: step() must accept t0 and keep advancing from it.
+    t2 = step(state, CUBE.tets, dm_inv, rest_vol, params, fiber=fiber, t0=t1)
+    assert t2 > t1
+
+
+def test_fiber_gradient_is_not_symmetric_under_a_diagonal_direction():
+    """Every other fixture in this file points along +X, where
+    outer(Fa/|Fa|, a) collapses to a diagonal matrix and a transposed dC/dF
+    in the coming GLSL kernel would pass by coincidence. A single tet,
+    stretched anisotropically and pulled along the (1,1,0) diagonal, breaks
+    that: F a is no longer parallel to a, so the correct gradient pulls
+    node 1 unevenly in x and y (tracking F's 1.5:1 stretch) while a
+    transposed gradient would pull it evenly, since a's own x and y
+    components are equal."""
+    nodes = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    tets = np.array([[0, 1, 2, 3]], dtype=np.int64)
+    dm_inv, rest_vol = precompute(nodes, tets)
+
+    fiber = np.array([[1.0, 1.0, 0.0, 0.75]], dtype=np.float64)
+    fiber[:, :3] /= np.linalg.norm(fiber[:, :3])
+
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), mu=0.0, lam=0.0,
+        fiber_k=1.0e4, wave_amp=0.0,  # s == 1.0: an undisguised gradient probe
+    )
+    h = params.dt / params.substeps
+    state = make_state(nodes)
+    # Anisotropic pre-stretch: x by 1.5, y and z untouched, so F = diag(1.5,
+    # 1, 1) and F a is skewed towards x - no longer parallel to a.
+    stretched = nodes * np.array([1.5, 1.0, 1.0])
+    state.predicted[:] = stretched
+
+    solve_constraints(state, tets, dm_inv, rest_vol, params, h, fiber=fiber)
+
+    disp = state.predicted[1] - stretched[1]
+    assert abs(disp[0]) > 1e-9 and abs(disp[1]) > 1e-9, "fiber must move node 1"
+    assert abs(disp[0]) > abs(disp[1]) * 1.1, (
+        "node 1's pull must be stronger in x than y, tracking F's stretch; "
+        "a transposed gradient would pull x and y equally since a's own "
+        "components are equal"
+    )
