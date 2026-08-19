@@ -23,6 +23,15 @@ class SolverParams:
     # Needs the attachment pass, which is where targets arrive.
     pin_kinematic: bool = False
 
+    # --- fiber ---
+    # Anisotropic muscle term. Inert at these defaults, so every body that
+    # does not ask for fibers solves exactly as it did before.
+    fiber_k: float = 0.0    # fiber stiffness; 0 disables the term
+    wave_amp: float = 0.0   # peak contraction, 0.3 shortens to 70%
+    wave_len: float = 1.0   # wave period in arclength units
+    wave_speed: float = 0.0  # cycles per second; negative reverses travel
+    waveform: int = 0       # 0 smooth cosine, 1 square
+
 
 @dataclass
 class SolverState:
@@ -58,7 +67,7 @@ def precompute(nodes: np.ndarray, tets: np.ndarray):
 
 
 def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
-         targets=None) -> None:
+         targets=None, fiber=None) -> None:
     """Advance one frame of ``params.substeps`` XPBD substeps, in place.
 
     ``targets``, when given alongside ``params.attach > 0``, are the
@@ -70,6 +79,12 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
     gravity = np.asarray(params.gravity, dtype=np.float64)
     movable = state.inv_mass > 0.0
 
+    # Simulation clock for the fiber wave. Advances per substep, not per
+    # frame: a per-frame clock steps the wave in visible stairs at low
+    # substep counts. Local, so a fresh step() sequence always starts at the
+    # same phase - the GPU mirrors this with GPUSolver.sim_time.
+    t = 0.0
+
     for _ in range(params.substeps):
         # predict
         state.predicted[:] = state.nodes
@@ -77,7 +92,7 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
             state.velocities[movable] * h + gravity * (h * h)
         )
 
-        solve_constraints(state, tets, dm_inv, rest_vol, params, h)
+        solve_constraints(state, tets, dm_inv, rest_vol, params, h, fiber=fiber, t=t)
         # Stiffness 0 still runs the pass when there are driven pins: they
         # need targets, and the free material needs to be left alone. See
         # solve_attachment's drive_free.
@@ -106,6 +121,28 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
         # that runs before it.
         if params.pin_kinematic:
             state.nodes[~movable] = state.predicted[~movable]
+
+        t += h
+
+
+def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
+    """Target stretch along the fiber for one tet at time ``t``.
+
+    1.0 is rest. Below 1.0 the tet is being told to shorten. The phase
+    argument is the tet's baked arclength, so two tets at different points
+    along the body reach their peak at different times - which is the whole
+    difference between a travelling wave and a body that pulses in unison.
+
+    Mirrored in kernels.SOLVE_SRC. GLSL fract and numpy % agree on negative
+    inputs, which matters because t * wave_speed drives this negative within
+    the first second.
+    """
+    cycle = (phase / params.wave_len - t * params.wave_speed) % 1.0
+    if params.waveform == 0:
+        pulse = 0.5 * (1.0 - np.cos(2.0 * np.pi * cycle))
+    else:
+        pulse = 1.0 if cycle >= 0.5 else 0.0
+    return 1.0 - params.wave_amp * pulse
 
 
 def attach_compliance(stiffness: float, dt: float) -> float:
@@ -216,9 +253,11 @@ def _apply(state, nodes_idx, grads, c_value, compliance, h, lam_acc):
     return lam_acc + dlambda
 
 
-def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
-    """Stable neo-Hookean: one deviatoric and one hydrostatic constraint per tet."""
-    if params.mu <= 0.0 and params.lam <= 0.0:
+def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
+                      fiber=None, t=0.0) -> None:
+    """Stable neo-Hookean, plus an optional anisotropic fiber term."""
+    fiber_on = params.fiber_k > 0.0 and fiber is not None
+    if params.mu <= 0.0 and params.lam <= 0.0 and not fiber_on:
         return
 
     gamma = 1.0 + (params.mu / params.lam if params.lam > 0.0 else 0.0)
@@ -228,8 +267,8 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
     lam_dev = np.zeros(n_tets, dtype=np.float64)
     lam_hyd = np.zeros(n_tets, dtype=np.float64)
 
-    for t in range(n_tets):
-        idx = tets[t]
+    for t_i in range(n_tets):
+        idx = tets[t_i]
         if not np.any(state.inv_mass[idx] > 0.0):
             continue
 
@@ -242,7 +281,7 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
             ],
             axis=1,
         )
-        f = ds @ dm_inv[t]
+        f = ds @ dm_inv[t_i]
 
         # Deviatoric: resist distortion. The constraint is driven to zero with
         # no rest offset, which on its own would collapse the tet to a point.
@@ -253,11 +292,28 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
         if params.mu > 0.0:
             c_dev = float(np.sqrt(np.sum(f * f)))
             if c_dev > 1e-12:
-                grads = _grads_from_dcdf(f / c_dev, dm_inv[t])
-                lam_dev[t] = _apply(
+                grads = _grads_from_dcdf(f / c_dev, dm_inv[t_i])
+                lam_dev[t_i] = _apply(
                     state, idx, grads, c_dev,
-                    1.0 / (params.mu * abs(rest_vol[t])), h, lam_dev[t],
+                    1.0 / (params.mu * abs(rest_vol[t_i])), h, lam_dev[t_i],
                 )
+
+        # Fiber: resist stretch along a, and drive it below rest length when
+        # the wave says so. Sits between the two isotropic terms because the
+        # hydrostatic pass below rebuilds F from the positions this moved,
+        # and that is what turns shortening into a sideways bulge.
+        if fiber_on:
+            a = fiber[t_i, :3]
+            if float(a @ a) > 0.5:
+                s = fiber_activation(float(fiber[t_i, 3]), t, params)
+                fa = f @ a
+                fiber_len = float(np.linalg.norm(fa))
+                if fiber_len > 1e-12:
+                    grads = _grads_from_dcdf(np.outer(fa / fiber_len, a), dm_inv[t_i])
+                    _apply(
+                        state, idx, grads, fiber_len - s,
+                        1.0 / (params.fiber_k * abs(rest_vol[t_i])), h, 0.0,
+                    )
 
         # Hydrostatic: resist volume change.
         if params.lam > 0.0:
@@ -274,16 +330,16 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h) -> None:
                 ],
                 axis=1,
             )
-            f = ds @ dm_inv[t]
+            f = ds @ dm_inv[t_i]
             f0, f1, f2 = f[:, 0], f[:, 1], f[:, 2]
             dcdf = np.stack(
                 [np.cross(f1, f2), np.cross(f2, f0), np.cross(f0, f1)], axis=1
             )
-            grads = _grads_from_dcdf(dcdf, dm_inv[t])
+            grads = _grads_from_dcdf(dcdf, dm_inv[t_i])
             c_hyd = float(np.linalg.det(f) - gamma)
-            lam_hyd[t] = _apply(
+            lam_hyd[t_i] = _apply(
                 state, idx, grads, c_hyd,
-                1.0 / (params.lam * abs(rest_vol[t])), h, lam_hyd[t],
+                1.0 / (params.lam * abs(rest_vol[t_i])), h, lam_hyd[t_i],
             )
 
 
