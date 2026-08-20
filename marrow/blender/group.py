@@ -138,6 +138,11 @@ def advance(session, frame: int, frame_start: int):
     # 15, played on to 24, solver still running the old flag. Both of these
     # change what _build_solver produces, which is the same reason Attachment
     # qualifies.
+    #
+    # The Stiffness Group is here for the same reason again: it is read in
+    # _compute_region at build time, so without this a group picked
+    # mid-playback does nothing until the timeline is scrubbed back and the
+    # feature reads as broken.
     for m in members:
         obj = bpy.data.objects.get(m.object_name)
         settings = getattr(obj, "marrow", None) if obj is not None else None
@@ -146,6 +151,8 @@ def advance(session, frame: int, frame_start: int):
             or float(settings.attach_stiffness) != m.attach_stiffness
             or str(settings.pin_group) != m.pin_group
             or bool(settings.pin_follows) != m.pin_kinematic
+            or str(settings.region_group) != m.region_group
+            or float(settings.region_softest) != m.region_softest
         ):
             _restart(members, frame_start)
             break
