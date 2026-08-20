@@ -304,21 +304,35 @@ void main()
       vec3 fp0 = imageLoad(p, texel(idx.x)).xyz;
       mat3 ff = shape_matrix(idx, fp0) * dm_inv;
 
-      // The wave's own phase, before wrapping. The noise below is expressed
-      // in this coordinate rather than in raw arclength or seconds, so it
-      // rescales with Wavelength and Speed instead of needing a re-tune
-      // whenever either changes.
-      float u = fb.w / wave_len - wave_time * wave_speed;
+      // Position along the body, in wavelengths, and the wave's own phase.
+      float x = fb.w / wave_len;
+      float u = x - wave_time * wave_speed;
 
-      // Both wobble multipliers are under 1, so the jitter always varies
-      // more slowly along the body than the wave does. That is what keeps
-      // this reading as an uneven wave rather than shredding: neighbouring
-      // tets stay in step with each other even as the crest drifts.
+      // The noise is sampled in position AND time, with a drift rate that is
+      // deliberately not the wave's own.
+      //
+      // Driving it from u instead - which is what 1.7.0 did - makes the whole
+      // activation a function of u alone. Any function of (x - v t) is a
+      // rigid travelling wave by definition: one fixed profile sliding along
+      // the body, the same picture every frame. Measured on a 6 m body, the
+      // shape at t = 0.5 s matched the shape at t = 0 shifted by exactly
+      // wave_len * wave_speed * 0.5 to within 0.001. A wobblier cross-section
+      // is still clockwork, which is precisely what it looked like.
+      //
+      // The x multipliers are bounded, not chosen for taste. wobble' peaks at
+      // 0.5 + 0.3*2.3941 + 0.2*5.1287 = 2.2444, so d(jitter)/dx maxes out at
+      // wave_noise * 0.3 * 1.2 * 2.2444 = 0.808. Since d(u)/dx is 1, the
+      // wrapped phase stays monotonic along the body for every wave_noise up
+      // to 1 - which is what stops neighbouring tets getting unrelated phases
+      // and shredding the body instead of undulating it. Raising 1.2 to 1.5
+      // breaks that.
       float jitter = 0.0;
       float amp = wave_amp;
       if (wave_noise > 0.0) {
-        jitter = wave_noise * 0.25 * wobble(u * 0.6);
-        float gain = 1.0 + wave_noise * 0.5 * wobble(u * 0.37 + 11.0);
+        jitter = wave_noise * 0.3
+               * wobble(x * 1.2 + wave_time * (1.1 + 0.6 * wave_speed));
+        float gain = 1.0 + wave_noise * 0.5
+               * wobble(x * 0.9 - wave_time * (0.7 + 1.5 * wave_speed) + 11.0);
         // Clamped, because a gain above 1 can push amp past 1, and a target
         // stretch of zero or less is a constraint no length can satisfy -
         // the tet would be pulled inward forever. Only reachable with noise

@@ -169,15 +169,23 @@ def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
     inputs, which matters because t * wave_speed drives this negative within
     the first second.
     """
-    # The wave's own phase, before wrapping. Noise rides this coordinate so
-    # it rescales with wave_len and wave_speed rather than needing a re-tune.
-    u = phase / params.wave_len - t * params.wave_speed
+    # Position along the body in wavelengths, and the wave's own phase.
+    x = phase / params.wave_len
+    u = x - t * params.wave_speed
 
+    # Sampled in position AND time, at a drift rate that is not the wave's.
+    # A noise driven from u alone makes the activation a function of (x - v t),
+    # which is a rigid travelling wave however wobbly its profile - see the
+    # GLSL twin for the measurement that caught it.
     jitter = 0.0
     amp = params.wave_amp
     if params.wave_noise > 0.0:
-        jitter = params.wave_noise * 0.25 * wobble(u * 0.6)
-        gain = 1.0 + params.wave_noise * 0.5 * wobble(u * 0.37 + 11.0)
+        jitter = params.wave_noise * 0.3 * wobble(
+            x * 1.2 + t * (1.1 + 0.6 * params.wave_speed)
+        )
+        gain = 1.0 + params.wave_noise * 0.5 * wobble(
+            x * 0.9 - t * (0.7 + 1.5 * params.wave_speed) + 11.0
+        )
         # See the GLSL twin: amp past 1 is a constraint no length satisfies.
         amp = float(np.clip(params.wave_amp * gain, 0.0, 0.95))
 

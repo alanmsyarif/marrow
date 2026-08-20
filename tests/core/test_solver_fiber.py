@@ -248,18 +248,106 @@ def test_noise_stays_within_rest_length():
     assert highest <= 1.0 + 1e-12, highest
 
 
-def test_noise_varies_more_slowly_than_the_wave():
-    """The jitter has to be smoother along the body than the wave it
-    perturbs. If it were not, neighbouring tets would get unrelated phases
-    and the body would shred instead of undulating."""
-    params = SolverParams(wave_amp=0.4, wave_len=1.0, wave_speed=0.0, wave_noise=1.0)
-    phases = np.linspace(0.0, 6.0, 600)
-    values = np.array([fiber_activation(p, 0.0, params) for p in phases])
-    # Sign changes in the derivative count the crests. A wavelength of 1.0
-    # over 6 units is 6 crests; noise must not multiply that.
-    slope = np.diff(values)
-    turns = int(np.sum(slope[1:] * slope[:-1] < 0))
-    assert turns <= 14, f"{turns} turning points - the jitter is too fast"
+def _phase_slope(params, t, span=40.0, n=40000):
+    """d(wrapped phase)/dx along the body, unwrapped - the anti-shred test.
+
+    Computed from the same pieces fiber_activation uses rather than from its
+    output, because the output is wrapped by the fract and its derivative is
+    discontinuous at every crest.
+    """
+    x = np.linspace(0.0, span, n) / params.wave_len
+    jitter = params.wave_noise * 0.3 * wobble(
+        x * 1.2 + t * (1.1 + 0.6 * params.wave_speed)
+    )
+    return np.diff(x + jitter) / np.diff(x)
+
+
+def test_the_phase_stays_monotonic_along_the_body():
+    """The jitter must never run the phase backwards. If it did, two
+    neighbouring tets would be handed unrelated points in the cycle and the
+    body would shred rather than undulate.
+
+    This is a bound, not a taste: wobble' peaks at 0.5 + 0.3*2.3941 +
+    0.2*5.1287 = 2.2444, so the 0.3 and 1.2 coefficients cap d(jitter)/dx at
+    0.808 against a d(x)/dx of 1. Raising 1.2 to 1.5 breaks it, and this
+    test is what says so.
+    """
+    for noise in (0.2, 0.5, 0.8, 1.0):
+        params = SolverParams(
+            wave_amp=0.4, wave_len=2.0, wave_speed=1.0, wave_noise=noise
+        )
+        for t in (0.0, 0.7, 3.1):
+            slope = _phase_slope(params, t)
+            assert slope.min() > 0.0, (
+                f"noise {noise} at t={t}: phase runs backwards "
+                f"(min slope {slope.min():.3f})"
+            )
+
+
+def test_noise_is_not_a_rigid_translation():
+    """The failure that made 1.7.0's noise useless.
+
+    Any activation that is a function of (x - v t) alone is a rigid
+    travelling wave: one fixed profile sliding along the body, the same
+    picture every frame, however wobbly that profile is. 1.7.0 drove the
+    noise from the wave phase u, which is exactly that - the shape at t=0.5
+    matched the shape at t=0 shifted by wave_len * wave_speed * 0.5 to
+    within 0.001, and it read on screen as clockwork.
+    """
+    params = SolverParams(
+        wave_amp=0.72, wave_len=2.0, wave_speed=1.0, wave_noise=0.7
+    )
+    x = np.linspace(0.0, 12.0, 1200)
+    a = np.array([fiber_activation(xi, 0.0, params) for xi in x])
+    b = np.array([fiber_activation(xi, 0.5, params) for xi in x])
+
+    best = min(
+        np.abs(a[s:] - b[: len(b) - s]).max() if s > 0
+        else np.abs(a[: len(a) + s] - b[-s:]).max() if s < 0
+        else np.abs(a - b).max()
+        for s in range(-400, 401)
+    )
+    assert best > 0.1, (
+        f"best residual over every shift is {best:.4f} - the body is still a "
+        f"rigid profile sliding along, which is what looks mechanical"
+    )
+
+
+def test_a_noiseless_wave_is_a_rigid_translation():
+    """The converse, so the test above is measuring what it claims to. With
+    noise off the wave IS rigid, by design."""
+    params = SolverParams(wave_amp=0.72, wave_len=2.0, wave_speed=1.0)
+    x = np.linspace(0.0, 12.0, 1200)
+    a = np.array([fiber_activation(xi, 0.0, params) for xi in x])
+    b = np.array([fiber_activation(xi, 0.5, params) for xi in x])
+    shift = 100  # wave_len * wave_speed * 0.5 in samples
+    assert np.abs(a[: len(a) - shift] - b[shift:]).max() < 0.01
+
+
+def test_noise_varies_the_beat_at_a_fixed_point():
+    """What a viewer actually sees: one place on the body, contracting over
+    and over. Without noise every beat is identical."""
+    x = 3.0
+    ts = np.linspace(0.0, 30.0, 30000)
+
+    def beats(noise):
+        params = SolverParams(
+            wave_amp=0.5, wave_len=2.0, wave_speed=1.0, wave_noise=noise
+        )
+        v = np.array([fiber_activation(x, t, params) for t in ts])
+        low = np.nonzero((v[1:-1] < v[:-2]) & (v[1:-1] < v[2:]))[0] + 1
+        return np.diff(ts[low]), v[low]
+
+    gaps, depths = beats(0.0)
+    # Neither is exactly zero: crest times land on the 1 ms sampling grid,
+    # which is worth ~2e-4 s of interval spread and ~1e-6 of depth. Both are
+    # orders below the noisy case asserted underneath.
+    assert gaps.std() < 1e-3, "a noiseless wave must beat like a metronome"
+    assert depths.max() - depths.min() < 1e-5
+
+    gaps, depths = beats(0.7)
+    assert gaps.std() > 0.05, f"beat interval spread only {gaps.std():.4f} s"
+    assert depths.max() - depths.min() > 0.15, "every beat still bites the same"
 
 
 def test_wobble_is_bounded():

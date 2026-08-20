@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "marrow"
-version = "1.7.0"
+version = "1.7.1"
 name = "Marrow"
 tagline = "GPU tetrahedral soft body simulation"
 maintainer = "Amsy <alanmaulanasyarif@gmail.com>"

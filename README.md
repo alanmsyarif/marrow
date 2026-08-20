@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.7.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.7.1.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -184,16 +184,22 @@ Directions come from a **Curve** you point at the body. Each tet takes the tange
 
 The wave itself is procedural, not keyframed. **Wavelength** and **Speed** set its shape and how fast it travels: the crest moves at Wavelength x Speed in world units per second, and a negative Speed sends it the other way. **Amplitude** is how hard it squeezes - 0.3 shortens a fiber to 70% of its rest length at the crest. **Waveform** picks a smooth cosine or a hard on/off square.
 
-**Noise** is what stops it looking like a machine. A pure travelling wave is periodic in both space and time: every crest arrives exactly one Wavelength after the last and squeezes exactly as hard, and nothing alive moves like that. Noise jitters both - when a crest arrives, and how deep it goes. Measured on a body 30 units long at Wavelength 1.0, contraction depth being the fiber's target length at the crest:
+**Noise** is what stops it looking like a machine. A pure travelling wave is periodic in space and in time: every crest arrives exactly one Wavelength after the last and squeezes exactly as hard, and nothing alive moves like that. Noise jitters both - when a crest arrives, and how deep it goes.
 
-| Noise | Crest spacing | Depth at the crest |
-| --- | --- | --- |
-| 0.00 | 1.000 +- 0.000 | 0.600 every time |
-| 0.35 | 1.001 +- 0.043 | 0.547 to 0.666 |
-| 0.70 | 1.003 +- 0.085 | 0.495 to 0.733 |
-| 1.00 | 1.004 +- 0.119 | 0.450 to 0.791 |
+The last column is the one that matters, and it is worth explaining. An activation that depends only on `position - speed x time` is a **rigid** travelling wave: one fixed profile sliding along the body, the same picture every frame. Making that profile wobbly does not help - it still slides unchanged, and still reads as clockwork. The number below is how far the body's shape at t = 0.5 s differs from its shape at t = 0 slid along by the best possible amount. Near zero means rigid. Measured at Wavelength 2.0, Speed 1.0, sampling one fixed point on the body:
 
-Mean spacing stays at the Wavelength you asked for, so Noise perturbs the wave rather than replacing it - raising it does not quietly retune Wavelength and Speed underneath you. The jitter is expressed in the wave's own phase, so it rescales with both automatically, and it deliberately varies more slowly along the body than the wave does: a jitter finer than the wave would give neighbouring tets unrelated phases and shred the body instead of undulating it.
+| Noise | Beat interval | Depth at the crest | Rigid-shift residual |
+| --- | --- | --- | --- |
+| 0.00 | 1.000 +- 0.000 s | 0.500 every time | 0.001 |
+| 0.35 | 0.999 +- 0.074 s | 0.416 to 0.575 | 0.103 |
+| 0.70 | 0.998 +- 0.139 s | 0.337 to 0.637 | 0.206 |
+| 1.00 | 0.876 +- 0.265 s | 0.280 to 0.883 | 0.301 |
+
+So the noise is sampled in position *and* time, at a drift rate that is deliberately not the wave's own - it slides through the wave rather than along with it, and no two cycles come out the same.
+
+Up to 0.7 the mean beat interval stays at the Wavelength and Speed you asked for, so Noise perturbs the wave rather than quietly retuning it. At 1.0 it is strong enough to merge and split crests outright, which is why the mean drops; that is the intended extreme, not a bug.
+
+The jitter is bounded so the wave's phase always advances along the body. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.
 
 Zero is the clockwork wave exactly - the noise arithmetic is skipped, not multiplied by zero - so an older scene keeps the motion it had. New bodies default to 0.35.
 
