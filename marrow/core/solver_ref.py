@@ -31,6 +31,10 @@ class SolverParams:
     wave_len: float = 1.0   # wave period in arclength units
     wave_speed: float = 0.0  # cycles per second; negative reverses travel
     waveform: int = 0       # 0 smooth cosine, 1 square
+    # Irregularity, 0..1. Jitters both when a crest arrives and how hard it
+    # bites. Zero is not merely the default but the bit-identical path: the
+    # noise arithmetic is skipped entirely, not multiplied by zero.
+    wave_noise: float = 0.0
 
 
 @dataclass
@@ -136,6 +140,20 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
     return t
 
 
+def wobble(u):
+    """Smooth aperiodic field in roughly [-1, 1]. Mirrors the GLSL wobble.
+
+    Three sines whose frequencies share no small common multiple, so the sum
+    has no visible period. A hash would be the obvious choice for noise and
+    is the wrong one here - see the comment on the GLSL twin.
+    """
+    return (
+        0.5 * np.sin(u)
+        + 0.3 * np.sin(u * 2.3941 + 1.7)
+        + 0.2 * np.sin(u * 5.1287 + 4.3)
+    )
+
+
 def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
     """Target stretch along the fiber for one tet at time ``t``.
 
@@ -144,16 +162,31 @@ def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
     along the body reach their peak at different times - which is the whole
     difference between a travelling wave and a body that pulses in unison.
 
+    ``wave_noise`` above zero jitters both the arrival of each crest and its
+    strength, which is what stops a pure sinusoid reading as clockwork.
+
     Mirrored in kernels.SOLVE_SRC. GLSL fract and numpy % agree on negative
     inputs, which matters because t * wave_speed drives this negative within
     the first second.
     """
-    cycle = (phase / params.wave_len - t * params.wave_speed) % 1.0
+    # The wave's own phase, before wrapping. Noise rides this coordinate so
+    # it rescales with wave_len and wave_speed rather than needing a re-tune.
+    u = phase / params.wave_len - t * params.wave_speed
+
+    jitter = 0.0
+    amp = params.wave_amp
+    if params.wave_noise > 0.0:
+        jitter = params.wave_noise * 0.25 * wobble(u * 0.6)
+        gain = 1.0 + params.wave_noise * 0.5 * wobble(u * 0.37 + 11.0)
+        # See the GLSL twin: amp past 1 is a constraint no length satisfies.
+        amp = float(np.clip(params.wave_amp * gain, 0.0, 0.95))
+
+    cycle = (u + jitter) % 1.0
     if params.waveform == 0:
         pulse = 0.5 * (1.0 - np.cos(2.0 * np.pi * cycle))
     else:
         pulse = 1.0 if cycle >= 0.5 else 0.0
-    return 1.0 - params.wave_amp * pulse
+    return 1.0 - amp * pulse
 
 
 def attach_compliance(stiffness: float, dt: float) -> float:

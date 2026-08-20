@@ -431,6 +431,17 @@ class MarrowSettings(bpy.types.PropertyGroup):
         soft_min=-10.0,
         soft_max=10.0,
     )
+    wave_noise: bpy.props.FloatProperty(
+        name="Noise",
+        description=(
+            "Irregularity. A pure wave arrives on a metronome and every "
+            "crest bites equally hard, which is what reads as mechanical; "
+            "this jitters both. 0 is the exact clockwork wave"
+        ),
+        default=0.35,
+        min=0.0,
+        max=1.0,
+    )
     waveform: bpy.props.EnumProperty(
         name="Waveform",
         description="Shape of the contraction pulse",
@@ -549,6 +560,7 @@ class MARROW_PT_panel(bpy.types.Panel):
             column.prop(settings, "wave_length")
             column.prop(settings, "wave_speed")
             column.prop(settings, "waveform")
+            column.prop(settings, "wave_noise")
 
         contact = sim.box()
         contact.prop(settings, "self_collision")

@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.6.3.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.7.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -81,6 +81,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Wavelength** | Distance between crests, along the curve. Floored at 1e-4 - both the oracle and the kernel divide by it unguarded, so this is not a soft suggestion. |
 | **Speed** | Cycles per second. Travel velocity is Wavelength x Speed. |
 | **Waveform** | Smooth cosine, or hard on/off square. |
+| **Noise** | Irregularity, 0..1. Jitters when each crest arrives and how hard it bites. 0 is the exact clockwork wave. |
 | **Friction** | Resistance to sliding, for the ground plane, self-collision and body-to-body contact. 0 slides freely. Colliders carry their own value instead. See [Friction](#friction). |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
 | **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
@@ -182,6 +183,19 @@ Directions come from a **Curve** you point at the body. Each tet takes the tange
 **A bevelled or cyclic curve bakes no fibers, and says nothing about it.** The curve is evaluated to a polyline that must resolve to one open path: a bevel or extrude turns it into a tube, a cyclic curve into a ring, and neither has an unambiguous direction to hand a fiber. Either one bakes nothing, silently - the panel keeps reading "Tetrahedralize to bake fibers" exactly as if no curve had been set at all. If fibers refuse to bake, check the curve for a bevel or `Cyclic U` before looking anywhere else.
 
 The wave itself is procedural, not keyframed. **Wavelength** and **Speed** set its shape and how fast it travels: the crest moves at Wavelength x Speed in world units per second, and a negative Speed sends it the other way. **Amplitude** is how hard it squeezes - 0.3 shortens a fiber to 70% of its rest length at the crest. **Waveform** picks a smooth cosine or a hard on/off square.
+
+**Noise** is what stops it looking like a machine. A pure travelling wave is periodic in both space and time: every crest arrives exactly one Wavelength after the last and squeezes exactly as hard, and nothing alive moves like that. Noise jitters both - when a crest arrives, and how deep it goes. Measured on a body 30 units long at Wavelength 1.0, contraction depth being the fiber's target length at the crest:
+
+| Noise | Crest spacing | Depth at the crest |
+| --- | --- | --- |
+| 0.00 | 1.000 +- 0.000 | 0.600 every time |
+| 0.35 | 1.001 +- 0.043 | 0.547 to 0.666 |
+| 0.70 | 1.003 +- 0.085 | 0.495 to 0.733 |
+| 1.00 | 1.004 +- 0.119 | 0.450 to 0.791 |
+
+Mean spacing stays at the Wavelength you asked for, so Noise perturbs the wave rather than replacing it - raising it does not quietly retune Wavelength and Speed underneath you. The jitter is expressed in the wave's own phase, so it rescales with both automatically, and it deliberately varies more slowly along the body than the wave does: a jitter finer than the wave would give neighbouring tets unrelated phases and shred the body instead of undulating it.
+
+Zero is the clockwork wave exactly - the noise arithmetic is skipped, not multiplied by zero - so an older scene keeps the motion it had. New bodies default to 0.35.
 
 Contraction alone moves nothing. Locomotion is contraction plus grip, so a crawling body needs [Friction](#friction) above zero and something to push against - `tools/fiber_demo.py` builds a working scene to start from.
 

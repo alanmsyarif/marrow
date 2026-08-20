@@ -166,6 +166,23 @@ float max_principal_stretch(mat3 f)
   return sqrt(max(eig, 0.0));
 }
 
+// A smooth, aperiodic-looking field in roughly [-1, 1], for jittering the
+// fiber wave. Three sines at frequencies sharing no small common multiple,
+// so the sum does not visibly repeat over any length of body or run of
+// frames.
+//
+// Deliberately NOT a hash. fract(sin(x) * 43758.5453) is the usual GLSL
+// one-liner and it is unusable here: the oracle runs in float64 and this in
+// float32, and that hash amplifies the last-bit difference between them
+// into a completely different number. Sines of a moderate argument agree to
+// far better than the 2e-5 the parity tests allow.
+float wobble(float u)
+{
+  return 0.5 * sin(u)
+       + 0.3 * sin(u * 2.3941 + 1.7)
+       + 0.2 * sin(u * 5.1287 + 4.3);
+}
+
 void main()
 {
   int t = color_begin + int(gl_GlobalInvocationID.x);
@@ -287,13 +304,37 @@ void main()
       vec3 fp0 = imageLoad(p, texel(idx.x)).xyz;
       mat3 ff = shape_matrix(idx, fp0) * dm_inv;
 
-      float cycle = fract(fb.w / wave_len - wave_time * wave_speed);
+      // The wave's own phase, before wrapping. The noise below is expressed
+      // in this coordinate rather than in raw arclength or seconds, so it
+      // rescales with Wavelength and Speed instead of needing a re-tune
+      // whenever either changes.
+      float u = fb.w / wave_len - wave_time * wave_speed;
+
+      // Both wobble multipliers are under 1, so the jitter always varies
+      // more slowly along the body than the wave does. That is what keeps
+      // this reading as an uneven wave rather than shredding: neighbouring
+      // tets stay in step with each other even as the crest drifts.
+      float jitter = 0.0;
+      float amp = wave_amp;
+      if (wave_noise > 0.0) {
+        jitter = wave_noise * 0.25 * wobble(u * 0.6);
+        float gain = 1.0 + wave_noise * 0.5 * wobble(u * 0.37 + 11.0);
+        // Clamped, because a gain above 1 can push amp past 1, and a target
+        // stretch of zero or less is a constraint no length can satisfy -
+        // the tet would be pulled inward forever. Only reachable with noise
+        // on, which is why the whole block is gated rather than the clamp
+        // applied unconditionally: at wave_noise 0 this has to be
+        // bit-for-bit the arithmetic that shipped before it existed.
+        amp = clamp(wave_amp * gain, 0.0, 0.95);
+      }
+
+      float cycle = fract(u + jitter);
       // Smooth is muscle; square is the literal (@Frame%10)/10 blink the
       // technique came from.
       float pulse = (waveform == 0)
         ? 0.5 * (1.0 - cos(6.2831853 * cycle))
         : step(0.5, cycle);
-      float s = 1.0 - wave_amp * pulse;
+      float s = 1.0 - amp * pulse;
 
       vec3 fa = ff * a;
       float fiber_len = length(fa);
@@ -372,6 +413,7 @@ SOLVE_PUSH = [
     ("FLOAT", "wave_speed"),
     ("FLOAT", "wave_time"),
     ("INT", "waveform"),
+    ("FLOAT", "wave_noise"),
 ]
 
 

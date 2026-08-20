@@ -469,6 +469,7 @@ class GPUSolver:
             self.sh_solve.uniform_float("wave_speed", self.params.wave_speed)
             self.sh_solve.uniform_float("wave_time", self.sim_time)
             self.sh_solve.uniform_int("waveform", int(self.params.waveform))
+            self.sh_solve.uniform_float("wave_noise", self.params.wave_noise)
             gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
         self._dispatch_blend()

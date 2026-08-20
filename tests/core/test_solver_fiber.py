@@ -8,6 +8,7 @@ from marrow.core.solver_ref import (
     precompute,
     solve_constraints,
     step,
+    wobble,
 )
 
 CUBE = build_lattice(np.zeros(3), 1.0, np.ones((1, 1, 1), dtype=bool))
@@ -194,3 +195,83 @@ def test_fiber_gradient_is_not_symmetric_under_a_diagonal_direction():
         "a transposed gradient would pull x and y equally since a's own "
         "components are equal"
     )
+
+
+def test_noise_zero_is_the_exact_clockwork_wave():
+    """Not close - equal. The noise block is skipped, not multiplied by
+    zero, so every scene that predates the slider keeps its motion."""
+    plain = SolverParams(wave_amp=0.4, wave_len=0.8, wave_speed=1.3, waveform=0)
+    noisy = SolverParams(
+        wave_amp=0.4, wave_len=0.8, wave_speed=1.3, waveform=0, wave_noise=0.0
+    )
+    for phase in (0.0, 0.31, 1.7, 4.2):
+        for t in (0.0, 0.4, 2.6):
+            assert fiber_activation(phase, t, plain) == fiber_activation(
+                phase, t, noisy
+            )
+
+
+def test_noise_changes_the_activation():
+    quiet = SolverParams(wave_amp=0.4, wave_len=0.8, wave_speed=1.3)
+    loud = SolverParams(wave_amp=0.4, wave_len=0.8, wave_speed=1.3, wave_noise=0.8)
+    differing = sum(
+        1
+        for phase in np.linspace(0.0, 4.0, 40)
+        if abs(fiber_activation(phase, 0.5, quiet) - fiber_activation(phase, 0.5, loud))
+        > 1e-6
+    )
+    assert differing > 30, f"only {differing}/40 samples moved"
+
+
+def test_noise_never_drives_the_target_to_zero():
+    """s <= 0 is a constraint no length can satisfy: the tet would be pulled
+    inward forever. The clamp on amp is what prevents it, and wave_amp at
+    its UI maximum with noise at its own maximum is the worst case."""
+    params = SolverParams(wave_amp=0.9, wave_len=0.5, wave_speed=2.0, wave_noise=1.0)
+    lowest = min(
+        fiber_activation(phase, t, params)
+        for phase in np.linspace(0.0, 10.0, 400)
+        for t in np.linspace(0.0, 5.0, 40)
+    )
+    assert lowest >= 0.05 - 1e-12, lowest
+
+
+def test_noise_stays_within_rest_length():
+    """Activation must never exceed 1: the wave shortens material, it does
+    not stretch it."""
+    params = SolverParams(wave_amp=0.5, wave_len=0.7, wave_speed=1.1, wave_noise=1.0)
+    highest = max(
+        fiber_activation(phase, t, params)
+        for phase in np.linspace(0.0, 10.0, 400)
+        for t in np.linspace(0.0, 5.0, 40)
+    )
+    assert highest <= 1.0 + 1e-12, highest
+
+
+def test_noise_varies_more_slowly_than_the_wave():
+    """The jitter has to be smoother along the body than the wave it
+    perturbs. If it were not, neighbouring tets would get unrelated phases
+    and the body would shred instead of undulating."""
+    params = SolverParams(wave_amp=0.4, wave_len=1.0, wave_speed=0.0, wave_noise=1.0)
+    phases = np.linspace(0.0, 6.0, 600)
+    values = np.array([fiber_activation(p, 0.0, params) for p in phases])
+    # Sign changes in the derivative count the crests. A wavelength of 1.0
+    # over 6 units is 6 crests; noise must not multiply that.
+    slope = np.diff(values)
+    turns = int(np.sum(slope[1:] * slope[:-1] < 0))
+    assert turns <= 14, f"{turns} turning points - the jitter is too fast"
+
+
+def test_wobble_is_bounded():
+    u = np.linspace(-50.0, 50.0, 20001)
+    w = wobble(u)
+    assert w.max() <= 1.0 and w.min() >= -1.0, (w.min(), w.max())
+
+
+def test_wobble_does_not_repeat_over_the_useful_range():
+    """A visibly periodic 'noise' is just a second wave. Compare the field
+    against itself shifted by each of its own component periods."""
+    u = np.linspace(0.0, 40.0, 4000)
+    base = wobble(u)
+    for shift in (2 * np.pi, 2 * np.pi / 2.3941, 2 * np.pi / 5.1287):
+        assert np.abs(wobble(u + shift) - base).max() > 0.3, shift

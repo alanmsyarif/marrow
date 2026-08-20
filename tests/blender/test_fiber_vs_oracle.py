@@ -79,6 +79,7 @@ def _run_solve(mesh, state, params, h, fiber, wave_time=0.0, torn=None):
         shader.uniform_float("wave_speed", params.wave_speed)
         shader.uniform_float("wave_time", wave_time)
         shader.uniform_int("waveform", params.waveform)
+        shader.uniform_float("wave_noise", params.wave_noise)
         gpu.compute.dispatch(shader, (end - begin + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)
@@ -198,4 +199,74 @@ def test_a_torn_tet_ignores_its_fiber():
     out = _run_solve(CUBE, state, params, h, fiber, torn=torn)
     assert np.allclose(out, CUBE.nodes, atol=TOL), (
         "a torn tet still contracted"
+    )
+
+
+def test_noisy_wave_matches_oracle():
+    """The jitter is two sines feeding a fract and a clamp, in float32 on the
+    GPU and float64 in the oracle. If those diverge anywhere it is here."""
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.35, wave_len=0.4, wave_speed=1.5, waveform=0,
+        wave_noise=0.75,
+    )
+    h = params.dt / params.substeps
+    fiber = np.zeros((BLOCK.n_tets, 4), dtype=np.float64)
+    rng = np.random.default_rng(19)
+    dirs = rng.normal(size=(BLOCK.n_tets, 3))
+    fiber[:, :3] = dirs / np.linalg.norm(dirs, axis=1)[:, None]
+    fiber[:, 3] = rng.uniform(0.0, 2.0, size=BLOCK.n_tets)
+
+    def squash(nodes):
+        nodes[:, 2] *= 0.85
+        return nodes
+
+    gpu_state, cpu_state = _paired_states(BLOCK, squash)
+    assert_close(
+        _run_solve(BLOCK, gpu_state, params, h, fiber, wave_time=0.37),
+        _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.37),
+        TOL,
+        "noisy smooth wave mid-travel",
+    )
+
+
+def test_noisy_square_wave_matches_oracle():
+    """Square is the harder case: the jitter moves the phase across the
+    step, so a divergence flips a tet fully on or fully off rather than
+    nudging it."""
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.4, wave_len=0.6, wave_speed=1.1, waveform=1,
+        wave_noise=1.0,
+    )
+    h = params.dt / params.substeps
+    fiber = _fibers(BLOCK.n_tets)
+    fiber[:, 3] = np.linspace(0.0, 3.0, BLOCK.n_tets)
+    gpu_state, cpu_state = _paired_states(BLOCK, lambda n: n)
+    assert_close(
+        _run_solve(BLOCK, gpu_state, params, h, fiber, wave_time=0.21),
+        _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.21),
+        TOL,
+        "noisy square wave",
+    )
+
+
+def test_noise_at_maximum_amplitude_matches_oracle():
+    """wave_amp at the UI ceiling with noise at its own: this is where the
+    clamp on amp is load-bearing, and where the two sides would part if only
+    one of them clamped."""
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.9, wave_len=0.35, wave_speed=2.0, waveform=0,
+        wave_noise=1.0,
+    )
+    h = params.dt / params.substeps
+    fiber = _fibers(BLOCK.n_tets)
+    fiber[:, 3] = np.linspace(0.0, 4.0, BLOCK.n_tets)
+    gpu_state, cpu_state = _paired_states(BLOCK, lambda n: n)
+    assert_close(
+        _run_solve(BLOCK, gpu_state, params, h, fiber, wave_time=0.63),
+        _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.63),
+        TOL,
+        "noise against the amplitude clamp",
     )
