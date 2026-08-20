@@ -153,3 +153,48 @@ def test_a_soft_body_deforms_further_than_a_stiff_one():
         f"soft cage moved {spread[0.01]:.4f}, stiff {spread[1.0]:.4f} - "
         "the multiplier is not reaching the solver"
     )
+
+
+def test_switching_the_group_on_a_live_session_takes_effect():
+    """The restart path, not a fresh session.
+
+    Every other test here builds a new MarrowSession, whose constructor
+    reads the panel - so none of them can see refresh_from_object failing
+    to. That gap is what let a Stiffness Group work in a Bake and do
+    nothing in Live.
+    """
+    obj = _caged_cube()
+    _paint(obj, "stiff", range(len(obj.data.vertices)), 1.0)
+    session = _session(obj)
+    assert session.region is None, "no group set yet"
+    obj.marrow.region_group = "stiff"
+    session.refresh_from_object()
+    session._build_solver()
+    assert session.region is not None, "refresh_from_object did not re-read the group"
+    assert np.allclose(session.region, 1.0)
+
+
+def test_changing_softest_on_a_live_session_takes_effect():
+    obj = _caged_cube()
+    group = obj.vertex_groups.new(name="stiff")
+    group.add([0], 1.0, "REPLACE")
+    obj.marrow.region_group = "stiff"
+    obj.marrow.region_softest = 0.1
+    session = _session(obj)
+    assert session.region.min() < 0.2, session.region.min()
+    obj.marrow.region_softest = 0.9
+    session.refresh_from_object()
+    session._build_solver()
+    assert session.region.min() > 0.85, session.region.min()
+
+
+def test_clearing_the_group_on_a_live_session_returns_to_uniform():
+    obj = _caged_cube()
+    _paint(obj, "stiff", range(len(obj.data.vertices)), 1.0)
+    obj.marrow.region_group = "stiff"
+    session = _session(obj)
+    assert session.region is not None
+    obj.marrow.region_group = ""
+    session.refresh_from_object()
+    session._build_solver()
+    assert session.region is None

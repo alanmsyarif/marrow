@@ -349,6 +349,11 @@ class MarrowSession:
         self.attach_stiffness = float(settings.attach_stiffness)
         self.pin_group = str(settings.pin_group)
         self.pin_kinematic = bool(settings.pin_follows)
+        # Read here as well as in __init__, or a session already alive
+        # keeps the group it was born with and a panel change silently
+        # does nothing until the object is freed by hand.
+        self.region_group = str(settings.region_group)
+        self.region_softest = float(settings.region_softest)
         # The panel holds a multiple of Resolution; the solver wants metres.
         self.resolution = float(settings.resolution)
         thickness = float(settings.self_thickness) * float(settings.resolution)
