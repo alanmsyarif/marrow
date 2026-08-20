@@ -67,7 +67,7 @@ def precompute(nodes: np.ndarray, tets: np.ndarray):
 
 
 def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
-         targets=None, fiber=None, t0: float = 0.0) -> float:
+         targets=None, fiber=None, t0: float = 0.0, region=None) -> float:
     """Advance one frame of ``params.substeps`` XPBD substeps, in place.
 
     ``targets``, when given alongside ``params.attach > 0``, are the
@@ -98,7 +98,10 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
             state.velocities[movable] * h + gravity * (h * h)
         )
 
-        solve_constraints(state, tets, dm_inv, rest_vol, params, h, fiber=fiber, t=t)
+        solve_constraints(
+            state, tets, dm_inv, rest_vol, params, h, fiber=fiber, t=t,
+            region=region,
+        )
         # Stiffness 0 still runs the pass when there are driven pins: they
         # need targets, and the free material needs to be left alone. See
         # solve_attachment's drive_free.
@@ -262,8 +265,15 @@ def _apply(state, nodes_idx, grads, c_value, compliance, h, lam_acc):
 
 
 def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
-                      fiber=None, t=0.0) -> None:
-    """Stable neo-Hookean, plus an optional anisotropic fiber term."""
+                      fiber=None, t=0.0, region=None) -> None:
+    """Stable neo-Hookean, plus an optional anisotropic fiber term.
+
+    ``region``, when given, is one stiffness multiplier per tet: mu and lam
+    are both scaled by it, so a body can be stiff in one place and soft in
+    another without a second material. None means a multiplier of 1
+    everywhere, and is not merely the default but the bit-identical path -
+    nothing is multiplied at all.
+    """
     fiber_on = params.fiber_k > 0.0 and fiber is not None
     if params.mu <= 0.0 and params.lam <= 0.0 and not fiber_on:
         return
@@ -279,6 +289,15 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
         idx = tets[t_i]
         if not np.any(state.inv_mass[idx] > 0.0):
             continue
+
+        # gamma above deliberately stays on the unscaled ratio: the
+        # multiplier cancels out of mu/lam, and it is the ratio the
+        # rest-state correction depends on. Mirrors SOLVE_SRC.
+        if region is None:
+            mu_t, lam_t = params.mu, params.lam
+        else:
+            rw = float(region[t_i])
+            mu_t, lam_t = params.mu * rw, params.lam * rw
 
         p0 = state.predicted[idx[0]]
         ds = np.stack(
@@ -297,13 +316,13 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
         # mu*I and -mu*I, so the rest state is stress-free. Subtracting sqrt(3)
         # here as well would zero this term twice over and leave the volume
         # constraint inflating the body to det(F) = gamma forever.
-        if params.mu > 0.0:
+        if mu_t > 0.0:
             c_dev = float(np.sqrt(np.sum(f * f)))
             if c_dev > 1e-12:
                 grads = _grads_from_dcdf(f / c_dev, dm_inv[t_i])
                 lam_dev[t_i] = _apply(
                     state, idx, grads, c_dev,
-                    1.0 / (params.mu * abs(rest_vol[t_i])), h, lam_dev[t_i],
+                    1.0 / (mu_t * abs(rest_vol[t_i])), h, lam_dev[t_i],
                 )
 
         # Fiber: resist stretch along a, and drive it below rest length when
@@ -339,7 +358,7 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
                     )
 
         # Hydrostatic: resist volume change.
-        if params.lam > 0.0:
+        if lam_t > 0.0:
             # F is recomputed rather than reused: the deviatoric projection
             # above has already moved state.predicted, so the stale F would
             # linearise the volume constraint about the wrong configuration.
@@ -362,7 +381,7 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
             c_hyd = float(np.linalg.det(f) - gamma)
             lam_hyd[t_i] = _apply(
                 state, idx, grads, c_hyd,
-                1.0 / (params.lam * abs(rest_vol[t_i])), h, lam_hyd[t_i],
+                1.0 / (lam_t * abs(rest_vol[t_i])), h, lam_hyd[t_i],
             )
 
 

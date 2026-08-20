@@ -82,7 +82,7 @@ class GPUSolver:
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_stiffness=0.0, attach_targets=None, blend_rows=None,
-                 pin_kinematic=False, fiber=None):
+                 pin_kinematic=False, fiber=None, region=None):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -178,6 +178,20 @@ class GPUSolver:
         else:
             fiber_rows = np.asarray(fiber, dtype=np.float64)[self._tet_order]
         self.tex_fiber = upload_verified(pack_fiber(fiber_rows))
+        # Per-tet stiffness multiplier, colour-permuted like the fiber rows
+        # for the same reason: a tet must read its own material, not its
+        # neighbour's. Ones when no group is painted, which the kernel
+        # multiplies through exactly.
+        if region is None:
+            region_rows = np.ones(mesh.n_tets, dtype=np.float64)
+        else:
+            region_rows = np.asarray(region, dtype=np.float64)
+            if region_rows.shape != (mesh.n_tets,):
+                raise ValueError(
+                    f"region must be ({mesh.n_tets},), got {region_rows.shape}"
+                )
+            region_rows = region_rows[self._tet_order]
+        self.tex_region = upload_verified(pack_scalar(region_rows), fmt="R32F")
 
         # Seconds of simulated time, for the fiber wave. Per substep, not
         # per frame - a per-frame clock steps the wave in visible stairs at
@@ -278,18 +292,7 @@ class GPUSolver:
         )
         self.sh_solve = kernels.build(
             "solve", kernels.SOLVE_SRC,
-            [("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
-             ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
-             ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
-             ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
-             ("RGBA32F", "FLOAT_2D", "fiber", {"READ"})],
-            [("FLOAT", "h"), ("FLOAT", "mu"), ("FLOAT", "lam"),
-             ("FLOAT", "tear_threshold"),
-             ("INT", "color_begin"), ("INT", "color_end"),
-             ("FLOAT", "fiber_k"), ("FLOAT", "wave_amp"),
-             ("FLOAT", "wave_len"), ("FLOAT", "wave_speed"),
-             ("FLOAT", "wave_time"), ("INT", "waveform")],
+            kernels.SOLVE_IMAGES, kernels.SOLVE_PUSH,
         )
         self.sh_collide = kernels.build(
             "collide", kernels.COLLIDE_SRC,
@@ -453,6 +456,7 @@ class GPUSolver:
             self.sh_solve.image("torn", self.tex_torn)
             self.sh_solve.image("live", self.tex_live)
             self.sh_solve.image("fiber", self.tex_fiber)
+            self.sh_solve.image("region", self.tex_region)
             self.sh_solve.uniform_float("h", h)
             self.sh_solve.uniform_float("tear_threshold", self.tear_threshold)
             self.sh_solve.uniform_float("mu", self.params.mu)

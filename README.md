@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.5.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.6.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -71,6 +71,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Substeps** | XPBD substeps per frame. More is stabler and slower, and this is the most expensive knob here. |
 | **Stiffness** | Resistance to distortion (deviatoric compliance). |
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
+| **Stiffness Group** | Vertex group saying where the body is stiff. Scales both sliders above, per tet. See [Per-region stiffness](#per-region-stiffness). |
+| **Softest** | Stiffness multiplier where that group's weight is 0. |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
 | **Fiber** | Contract along baked fiber directions. See [Fiber](#fiber). |
 | **Curve** | Curve running along the body. Its tangent is the fiber direction, its arclength the wave phase. |
@@ -156,6 +158,18 @@ Two things a torn tet still does:
 - **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
 **Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. Stick Break does not substitute: it measures how far a contact point *drags across the collider*, which barely moves in a straight pull, so a stretch that should snap keeps stretching. If a stretch shot smears instead of separating, switch Tearing on.
+
+### Per-region stiffness
+
+**Stiffness Group** makes one body two materials. Point it at a vertex group on the object and paint that group where the body should be firm; the weight scales **Stiffness** and **Volume Preservation** together, per tet.
+
+The mapping is anchored at the top. Weight 1 leaves both sliders exactly as set, and weight 0 drops to **Softest** - so the sliders stay the material you tuned and the group says where the body gives. Anchoring it the other way, with the multiplier equal to the raw weight, would make every unpainted vertex zero-stiffness: paint one stiff region and the rest of the body turns to soup. Softest defaults to 0.1, a tenth as stiff, and 0 does mean no resistance at all.
+
+Both terms take the same multiplier. Stiff material is stiff in shear and in volume alike, and scaling only one would change the material's Poisson ratio rather than its stiffness.
+
+The group is painted on the render mesh and read by the cage underneath through the same k-nearest-vertex map [Pinning](#pinning) and Attachment use, then averaged over each tet's four corners. Nothing is baked onto the cage, so unlike the fiber curve a repaint needs no re-tetrahedralize - return to the start frame in Live, or Free and bake again, and the solver is rebuilt with the new weights. An empty group name, a renamed group, or a group with no weights painted all leave the body uniform and cost nothing.
+
+The fiber term keeps its own **Fiber Stiffness** and is not scaled by the group. A soft region with fibers in it still pulls at full strength; it just resists less around them.
 
 ### Fiber
 
@@ -308,7 +322,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
-- **No plasticity or per-region materials.** Fiber adds anisotropy along one baked direction; `mu` and `lam` are still global.
+- **No plasticity.** Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. `mu` and `lam` vary per tet through a Stiffness Group, but every tet always wants its original shape.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.
 

@@ -32,7 +32,7 @@ class MarrowSession:
                  collider_objects=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_enabled=False, attach_stiffness=0.0, pin_group=None,
-                 pin_kinematic=None):
+                 pin_kinematic=None, region_group=None, region_softest=None):
         # A caller who supplies params owns them; only a session built from
         # the panel follows the panel. Otherwise a restart would silently
         # overwrite explicitly chosen settings.
@@ -77,6 +77,22 @@ class MarrowSession:
             if pin_kinematic is None
             else bool(pin_kinematic)
         )
+        # Vertex group whose weight says how stiff the material is, and the
+        # multiplier an unpainted vertex gets. Same None-reads-the-panel
+        # rule as pin_group above.
+        self.region_group = (
+            str(getattr(getattr(obj, "marrow", None), "region_group", ""))
+            if region_group is None
+            else str(region_group)
+        )
+        self.region_softest = (
+            float(getattr(getattr(obj, "marrow", None), "region_softest", 0.1))
+            if region_softest is None
+            else float(region_softest)
+        )
+        # Per-tet stiffness multiplier, or None for a uniform body. Built in
+        # _build_solver, so a restart picks up a repainted group.
+        self.region = None
         # Live mode simulates forward as the timeline plays, caching as it
         # goes, so scrubbing back is still a cache lookup.
         self.live = False
@@ -196,12 +212,12 @@ class MarrowSession:
             return
         import bpy
 
-        from .attach import pin_weights
+        from .attach import node_group_weights
 
         obj = bpy.data.objects.get(self.object_name)
         if obj is None:
             return
-        weights = pin_weights(obj, self.tetmesh, self.pin_group)
+        weights = node_group_weights(obj, self.tetmesh, self.pin_group)
         if weights is None:
             return
         scale = np.clip(1.0 - weights, 0.0, 1.0)
@@ -212,8 +228,40 @@ class MarrowSession:
         scale[scale < 1e-6] = 0.0
         self.inv_mass *= scale
 
+    def _compute_region(self) -> None:
+        """Per-tet stiffness multiplier from the painted group, or None.
+
+        Weight 1 keeps the panel's Stiffness and Volume Preservation as they
+        are, weight 0 drops to ``region_softest``. Anchored at the top on
+        purpose: the sliders stay the material the user tuned, and the group
+        says where the body gives. The alternative - multiplier equal to the
+        raw weight - turns every unpainted vertex to zero stiffness, so
+        painting one stiff region would liquefy the rest of the body.
+
+        Called from _build_solver rather than __init__ for the same reason
+        _compute_inv_mass is: a restart has to see a repainted group.
+        """
+        self.region = None
+        if not self.region_group:
+            return
+        import bpy
+
+        from ..core.attach import tet_scalar
+        from .attach import node_group_weights
+
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return
+        weights = node_group_weights(obj, self.tetmesh, self.region_group)
+        if weights is None:
+            return
+        softest = min(max(self.region_softest, 0.0), 1.0)
+        node_scale = softest + (1.0 - softest) * np.clip(weights, 0.0, 1.0)
+        self.region = tet_scalar(node_scale, self.tetmesh.tets)
+
     def _build_solver(self) -> None:
         self._compute_inv_mass()
+        self._compute_region()
         attach_targets = None
         attach_stiffness = 0.0
         if self.attach_active:
@@ -247,6 +295,7 @@ class MarrowSession:
             blend_rows=self.blend_rows,
             pin_kinematic=self.pin_kinematic,
             fiber=self.fiber,
+            region=self.region,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 

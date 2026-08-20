@@ -3,40 +3,27 @@ import numpy as np
 
 from _oracle_harness import BLOCK, CUBE, assert_close
 from marrow.core.coloring import color_tets
-from marrow.core.layout import color_ordered, pack_nodes, pack_rest, pack_tets, unpack_vec3
+from marrow.core.layout import (
+    color_ordered,
+    pack_nodes,
+    pack_rest,
+    pack_scalar,
+    pack_tets,
+    unpack_vec3,
+)
 from marrow.core.solver_ref import SolverParams, make_state, precompute, solve_constraints
-from marrow.gpu.kernels import SOLVE_SRC, build
+from marrow.gpu.kernels import SOLVE_IMAGES, SOLVE_PUSH, SOLVE_SRC, build
 from marrow.gpu.textures import blank, download, flush, make_flush_shader, upload
 
 gpu.init()
 
 TOL = 2e-5  # float32 across a full constraint projection on a unit-scale cage
 
-IMAGES = [
-    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
-    ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
-    ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
-    ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
-    ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
-    # The fiber term is off in this module - test_fiber_vs_oracle owns it -
-    # but every identifier SOLVE_SRC names still has to be declared or the
-    # kernel will not compile.
-    ("RGBA32F", "FLOAT_2D", "fiber", {"READ"}),
-]
-PUSH = [
-    ("FLOAT", "h"),
-    ("FLOAT", "mu"),
-    ("FLOAT", "lam"),
-    ("FLOAT", "tear_threshold"),
-    ("INT", "color_begin"),
-    ("INT", "color_end"),
-    ("FLOAT", "fiber_k"),
-    ("FLOAT", "wave_amp"),
-    ("FLOAT", "wave_len"),
-    ("FLOAT", "wave_speed"),
-    ("FLOAT", "wave_time"),
-    ("INT", "waveform"),
-]
+# The solver's own declaration lists, not a copy of them: a test that
+# declares its own interface stops testing the shader the addon runs the
+# moment the two drift.
+IMAGES = SOLVE_IMAGES
+PUSH = SOLVE_PUSH
 
 
 def _run_solve(mesh, state, params, h):
@@ -54,6 +41,12 @@ def _run_solve(mesh, state, params, h):
     # still has to be bound for the kernel to run.
     tex_live = blank(mesh.n_nodes, fmt="R32F")
     tex_fiber = blank(mesh.n_tets)
+    # Ones, not blank: the region multiplier scales mu and lam, so a zeroed
+    # image would switch both constraints off and this module would pass by
+    # comparing nothing against nothing.
+    tex_region = upload(
+        pack_scalar(np.ones(mesh.n_tets, dtype=np.float64)), fmt="R32F"
+    )
 
     for c in range(len(offsets) - 1):
         begin, end = int(offsets[c]), int(offsets[c + 1])
@@ -66,6 +59,7 @@ def _run_solve(mesh, state, params, h):
         shader.image("torn", tex_torn)
         shader.image("live", tex_live)
         shader.image("fiber", tex_fiber)
+        shader.image("region", tex_region)
         shader.uniform_float("h", h)
         shader.uniform_float("tear_threshold", 0.0)  # tearing off for parity
         shader.uniform_float("mu", params.mu)

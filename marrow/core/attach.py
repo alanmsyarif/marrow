@@ -124,3 +124,26 @@ def blend_scalar(idx: np.ndarray, w: np.ndarray, values: np.ndarray) -> np.ndarr
             f"{values.shape[0]} vertices"
         )
     return np.einsum("nk,nk->n", w, values[idx])
+
+
+def tet_scalar(node_values: np.ndarray, tets: np.ndarray) -> np.ndarray:
+    """Per-tet mean of a per-cage-node scalar.
+
+    ``blend_scalar`` gets a painted group as far as the cage nodes; the
+    elastic constraints are per tet, so this is the last hop. The mean of
+    the four corners, because a tet's material is the material of the
+    region it spans - taking the minimum would let one soft vertex hollow
+    out the shell around it, and the maximum would do the reverse.
+    """
+    node_values = np.asarray(node_values, dtype=np.float64)
+    tets = np.asarray(tets, dtype=np.int64)
+    if node_values.ndim != 1:
+        raise ValueError(f"node_values must be (N,), got {node_values.shape}")
+    if tets.size == 0:
+        return np.zeros(0, dtype=np.float64)
+    if int(tets.max()) >= node_values.shape[0]:
+        raise ValueError(
+            f"tets index node {int(tets.max())} but only "
+            f"{node_values.shape[0]} node values were given"
+        )
+    return node_values[tets].mean(axis=1)

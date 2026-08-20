@@ -9,39 +9,21 @@ from marrow.core.layout import (
     pack_fiber,
     pack_nodes,
     pack_rest,
+    pack_scalar,
     pack_tets,
     unpack_vec3,
 )
 from marrow.core.solver_ref import SolverParams, make_state, precompute, solve_constraints
-from marrow.gpu.kernels import SOLVE_SRC, build
+from marrow.gpu.kernels import SOLVE_IMAGES, SOLVE_PUSH, SOLVE_SRC, build
 from marrow.gpu.textures import blank, download, flush, make_flush_shader, upload
 
 gpu.init()
 
 TOL = 2e-5
 
-IMAGES = [
-    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
-    ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
-    ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
-    ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
-    ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
-    ("RGBA32F", "FLOAT_2D", "fiber", {"READ"}),
-]
-PUSH = [
-    ("FLOAT", "h"),
-    ("FLOAT", "mu"),
-    ("FLOAT", "lam"),
-    ("FLOAT", "tear_threshold"),
-    ("INT", "color_begin"),
-    ("INT", "color_end"),
-    ("FLOAT", "fiber_k"),
-    ("FLOAT", "wave_amp"),
-    ("FLOAT", "wave_len"),
-    ("FLOAT", "wave_speed"),
-    ("FLOAT", "wave_time"),
-    ("INT", "waveform"),
-]
+# The solver's own declaration lists, not a copy of them.
+IMAGES = SOLVE_IMAGES
+PUSH = SOLVE_PUSH
 
 
 def _fibers(n_tets, phase=0.75):
@@ -67,6 +49,11 @@ def _run_solve(mesh, state, params, h, fiber, wave_time=0.0, torn=None):
     tex_f = upload(pack_fiber(fiber[order]))
     tex_torn = blank(mesh.n_tets, fmt="R32F") if torn is None else upload(torn, fmt="R32F")
     tex_live = blank(mesh.n_nodes, fmt="R32F")
+    # Ones, not blank: a zeroed region multiplier would switch mu and lam
+    # off and leave the fiber term projecting on its own.
+    tex_region = upload(
+        pack_scalar(np.ones(mesh.n_tets, dtype=np.float64)), fmt="R32F"
+    )
 
     for c in range(len(offsets) - 1):
         begin, end = int(offsets[c]), int(offsets[c + 1])
@@ -79,6 +66,7 @@ def _run_solve(mesh, state, params, h, fiber, wave_time=0.0, torn=None):
         shader.image("torn", tex_torn)
         shader.image("live", tex_live)
         shader.image("fiber", tex_f)
+        shader.image("region", tex_region)
         shader.uniform_float("h", h)
         shader.uniform_float("tear_threshold", 0.0)
         shader.uniform_float("mu", params.mu)

@@ -180,6 +180,27 @@ class MarrowSettings(bpy.types.PropertyGroup):
         min=0.0,
         soft_max=1.0e7,
     )
+    region_group: bpy.props.StringProperty(
+        name="Stiffness Group",
+        description=(
+            "Vertex group saying where the body is stiff. Weight 1 keeps "
+            "Stiffness and Volume Preservation as set above, weight 0 drops "
+            "both to Softest. Painted on this mesh and read by the cage "
+            "underneath it, so a repaint takes effect on the next restart "
+            "without re-tetrahedralizing. Empty makes the body uniform"
+        ),
+        default="",
+    )
+    region_softest: bpy.props.FloatProperty(
+        name="Softest",
+        description=(
+            "Stiffness multiplier where the group weight is 0. 0.1 is ten "
+            "times softer than the sliders above; 0 is no resistance at all"
+        ),
+        default=0.1,
+        min=0.0,
+        max=1.0,
+    )
     damping: bpy.props.FloatProperty(
         name="Damping",
         description="Velocity retained each substep. 1.0 is undamped",
@@ -462,6 +483,15 @@ class MARROW_PT_panel(bpy.types.Panel):
         sim.prop(settings, "substeps")
         sim.prop(settings, "stiffness")
         sim.prop(settings, "volume_preservation")
+        # Directly under the two sliders it scales, because that is the only
+        # thing it does - it makes those numbers local instead of global.
+        region = sim.column(align=True)
+        region.prop_search(
+            settings, "region_group", obj, "vertex_groups", text="Stiffness Group"
+        )
+        row = region.row()
+        row.enabled = bool(settings.region_group)
+        row.prop(settings, "region_softest")
         sim.prop(settings, "damping")
         # A material property of the body, so it sits with stiffness and
         # damping rather than in any one contact box - it is the value the

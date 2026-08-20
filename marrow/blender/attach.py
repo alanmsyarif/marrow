@@ -251,18 +251,23 @@ def sample_targets(obj, idx, w):
     return targets
 
 
-def pin_weights(obj, tetmesh, group_name):
-    """Per-cage-node pin weight from a vertex group, or None to pin nothing.
+def node_group_weights(obj, tetmesh, group_name):
+    """Per-cage-node weight of a vertex group, or None if there is none.
 
     The group is painted on the RENDER mesh, because that is the geometry a
     user can see and select; cage nodes are interior lattice points with no
     groups of their own. They read the group through the same k-nearest map
-    the attachment pass uses, so a node is held exactly when the render
+    the attachment pass uses, so a node is affected exactly when the render
     surface around it is.
 
-    None rather than a zero array for "nothing to do": a missing, renamed or
-    unpainted group must leave inverse mass bit-identical to an unpinned
-    body, and must not pay for the k-nearest synthesis to find that out.
+    Both callers want the same thing from a painted group and differ only in
+    what they do with the answer: the pin group scales inverse mass, the
+    stiffness group scales mu and lam. One walk, one blend.
+
+    None rather than a zero array for "nothing to do". For pinning that
+    keeps inverse mass bit-identical to an unpinned body; for stiffness it
+    keeps the multiplier out of the solver entirely. Neither pays for the
+    k-nearest synthesis to find out.
     """
     name = str(group_name or "")
     if not name:
@@ -270,7 +275,7 @@ def pin_weights(obj, tetmesh, group_name):
     group = obj.vertex_groups.get(name)
     if group is None:
         # Renamed or deleted since the panel was set. Not an error - the
-        # bake should still run, unpinned.
+        # bake should still run without it.
         return None
 
     mesh = obj.data

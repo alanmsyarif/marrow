@@ -184,6 +184,24 @@ void main()
   mat3 dm_inv = mat3(r0.xyz, r1.xyz, r2.xyz);
   float rest_vol = abs(r0.w);
 
+  // Per-tet stiffness multiplier. Painted as a vertex group on the render
+  // mesh and carried to the cage by the same k-nearest map the pin group
+  // uses, so "stiff here" is authored where it can be seen.
+  //
+  // Always bound, and filled with 1.0 when no group is set. mu * 1.0 is
+  // exact in IEEE 754, so an unpainted body solves bit-for-bit as it did
+  // before this image existed - which is what lets the pre-existing parity
+  // tests stay unchanged.
+  //
+  // One multiplier for both terms: stiff material is stiff in shear and in
+  // volume alike, and scaling only one would change the Poisson ratio
+  // rather than the stiffness. gamma below deliberately stays on the
+  // UNSCALED ratio - it is a rest-state correction that depends on mu/lam,
+  // and the multiplier cancels out of a ratio.
+  float rw = imageLoad(region, texel(t)).r;
+  float mu_t = mu * rw;
+  float lam_t = lam * rw;
+
   vec4 w0 = imageLoad(p, texel(idx.x));
   vec4 w1 = imageLoad(p, texel(idx.y));
   vec4 w2 = imageLoad(p, texel(idx.z));
@@ -235,7 +253,7 @@ void main()
   // --- deviatoric ---
   // A torn tet stops resisting distortion, for good. That is what tearing
   // means here: the material goes slack instead of springing back.
-  if (mu > 0.0 && !is_torn) {
+  if (mu_t > 0.0 && !is_torn) {
     float c_dev = sqrt(dot(f[0], f[0]) + dot(f[1], f[1]) + dot(f[2], f[2]));
     if (c_dev > 1e-12) {
       mat3 dcdf = f / c_dev;
@@ -244,7 +262,7 @@ void main()
       vec3 g2v = g[1];
       vec3 g3v = g[2];
       vec3 g0v = -(g1v + g2v + g3v);
-      project(idx, g0v, g1v, g2v, g3v, c_dev, 1.0 / (mu * rest_vol), h);
+      project(idx, g0v, g1v, g2v, g3v, c_dev, 1.0 / (mu_t * rest_vol), h);
     }
   }
 
@@ -305,7 +323,7 @@ void main()
   // F is rebuilt from the positions the deviatoric pass just moved. Reusing the
   // stale F would linearise the volume constraint about the wrong
   // configuration. The oracle does the same.
-  if (lam > 0.0) {
+  if (lam_t > 0.0) {
     vec3 hp0 = imageLoad(p, texel(idx.x)).xyz;
     mat3 hf = shape_matrix(idx, hp0) * dm_inv;
 
@@ -321,10 +339,41 @@ void main()
     // material creep 10% larger every substep and never stop.
     float gamma = is_torn ? torn_vol : (1.0 + mu / lam);
     float c_hyd = determinant(hf) - gamma;
-    project(idx, g0v, g1v, g2v, g3v, c_hyd, 1.0 / (lam * rest_vol), h);
+    project(idx, g0v, g1v, g2v, g3v, c_hyd, 1.0 / (lam_t * rest_vol), h);
   }
 }
 """
+
+# Declared here rather than at each build site because there are three: the
+# solver and two parity tests, which have to hand the shader the same
+# interface or they stop testing the shader the addon actually runs.
+#
+# Seven images. A compute shader gets eight - measured, nine fails to
+# compile - so this is the last one that fits without merging two.
+SOLVE_IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "p", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "tets", {"READ"}),
+    ("RGBA32F", "FLOAT_2D", "rest", {"READ"}),
+    ("R32F", "FLOAT_2D", "torn", {"READ", "WRITE"}),
+    ("R32F", "FLOAT_2D", "live", {"READ", "WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "fiber", {"READ"}),
+    ("R32F", "FLOAT_2D", "region", {"READ"}),
+]
+SOLVE_PUSH = [
+    ("FLOAT", "h"),
+    ("FLOAT", "mu"),
+    ("FLOAT", "lam"),
+    ("FLOAT", "tear_threshold"),
+    ("INT", "color_begin"),
+    ("INT", "color_end"),
+    ("FLOAT", "fiber_k"),
+    ("FLOAT", "wave_amp"),
+    ("FLOAT", "wave_len"),
+    ("FLOAT", "wave_speed"),
+    ("FLOAT", "wave_time"),
+    ("INT", "waveform"),
+]
+
 
 BLEND_SRC = """
 // Hanging-node glue from the adaptive lattice. One row per hanging node:
