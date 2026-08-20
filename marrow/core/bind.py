@@ -259,3 +259,22 @@ def deform(nodes: np.ndarray, tets: np.ndarray, bind_idx: np.ndarray, bind_w: np
     """Interpolate point positions from the current cage node positions."""
     corners = nodes[tets[bind_idx]]  # (P, 4, 3)
     return np.einsum("pij,pi->pj", corners, bind_w)
+
+
+def bind_slip(nodes: np.ndarray, tets: np.ndarray, points: np.ndarray,
+              bind_idx: np.ndarray, bind_w: np.ndarray) -> np.ndarray:
+    """How far each point had to move to reach the cage, at rest.
+
+    A point inside a tet is reproduced exactly by its own barycentric
+    coordinates, so its slip is zero. A point outside every tet is not bound
+    at all in that sense - bind_points_iter clips its coordinates onto the
+    nearest tet - and the slip is how far away that tet was.
+
+    Which makes this the honest measure of geometry the cage failed to
+    cover. A surface vertex sitting just proud of the voxel hull slips a
+    fraction of a Resolution and deforms fine. A tentacle tip thinner than
+    Resolution gets no cells at all, and every vertex out there slips the
+    whole distance back to where the cage stopped - then rides that one
+    distant tet, which is what smears a tip into a spike.
+    """
+    return np.linalg.norm(points - deform(nodes, tets, bind_idx, bind_w), axis=1)

@@ -105,3 +105,38 @@ def test_non_finite_nodes_are_rejected_loudly():
 def test_non_finite_points_are_rejected_loudly():
     with pytest.raises(ValueError, match="NaN or inf"):
         bind_points(NODES, TETS, np.array([[0.1, np.inf, 0.1]]))
+
+
+def test_bind_slip_is_zero_inside_the_cage():
+    """A contained point is reproduced exactly by its own barycentric
+    coordinates, so it has nothing to slip."""
+    from marrow.core.bind import bind_slip
+
+    points = np.array([[0.2, 0.2, 0.2], [0.1, 0.15, 0.05]])
+    idx, w = bind_points(NODES, TETS, points)
+    slip = bind_slip(NODES, TETS, points, idx, w)
+    assert slip.shape == (2,)
+    assert slip.max() < 1e-12, slip
+
+
+def test_bind_slip_measures_the_distance_to_an_uncovered_point():
+    """A point outside every tet is clipped onto the nearest one. The slip is
+    how far it had to move, which is the geometry the cage never reached -
+    and the thing that makes a thin tip ride one distant tet instead of
+    being simulated."""
+    from marrow.core.bind import bind_slip
+
+    far = np.array([[0.0, 0.0, 5.0]])
+    idx, w = bind_points(NODES, TETS, far)
+    slip = bind_slip(NODES, TETS, far, idx, w)
+    assert slip[0] > 3.0, slip
+
+
+def test_bind_slip_grows_with_the_distance_outside():
+    from marrow.core.bind import bind_slip
+
+    near = np.array([[0.0, 0.0, 1.5]])
+    far = np.array([[0.0, 0.0, 4.0]])
+    a = bind_slip(NODES, TETS, near, *bind_points(NODES, TETS, near))
+    b = bind_slip(NODES, TETS, far, *bind_points(NODES, TETS, far))
+    assert b[0] > a[0] > 0.0

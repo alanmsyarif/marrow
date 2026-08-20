@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.8.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.8.1.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -365,6 +365,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
+- **Features thinner than Resolution get no cage.** The cage is a voxel fill, so anything finer than a cell - a tentacle tip, a fingertip, a horn - ends up with no tets at all. Render vertices out there are not simulated: they are glued to whichever tet was nearest and dragged by it, which stretches a tip into a spike or collapses it to a point. Tetrahedralize warns when more than 1% of vertices land more than a Resolution outside the cage, and names how far the worst one is. Lower Resolution, or turn on Adaptive and lower Min Size. Measured on a 3 m tapered tentacle ending at 1 cm: Resolution 0.05 left the last 30 cm uncovered, Adaptive with Min Size 0.0125 cut that to 10 cm, and Resolution 0.02 covered it outright at 119k tets.
 - **No plasticity.** Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. `mu` and `lam` vary per tet through a Stiffness Group, but every tet always wants its original shape.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.

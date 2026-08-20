@@ -1,3 +1,5 @@
+import math
+
 import bpy
 import numpy as np
 
@@ -73,3 +75,64 @@ def test_rerunning_replaces_the_previous_cage():
     bpy.ops.marrow.tetrahedralize()
     matching = [o for o in bpy.data.objects if o.name.startswith(f"{obj.name}_marrow_cage")]
     assert len(matching) == 1, f"expected one cage, found {[o.name for o in matching]}"
+
+
+def test_a_cage_that_misses_thin_geometry_says_so():
+    """The failure this exists to stop being silent: geometry finer than
+    Resolution gets no cells, and every render vertex out there is glued to
+    whichever tet was nearest and dragged by it. Nothing said so before -
+    the cage looked fine and the tip stretched into a spike at playback."""
+    import bmesh
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    try:
+        marrow.unregister()
+    except Exception:
+        pass
+    marrow.register()
+    mesh = bpy.data.meshes.new("Spike")
+    bm = bmesh.new()
+    rings, seg = 40, 12
+    rows = []
+    for i in range(rings):
+        f = i / (rings - 1)
+        r = 0.25 + (0.005 - 0.25) * f
+        rows.append([
+            bm.verts.new((r * math.cos(2 * math.pi * s / seg),
+                          r * math.sin(2 * math.pi * s / seg),
+                          -2.0 * f))
+            for s in range(seg)
+        ])
+    bm.verts.ensure_lookup_table()
+    for i in range(rings - 1):
+        for s in range(seg):
+            t = (s + 1) % seg
+            bm.faces.new((rows[i][s], rows[i][t], rows[i + 1][t], rows[i + 1][s]))
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new("Spike", mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    obj.marrow.resolution = 0.2       # far coarser than the tip
+    assert bpy.ops.marrow.tetrahedralize() == {"FINISHED"}
+
+    from marrow.blender.storage import read_bind, read_tetmesh
+    from marrow.core.bind import bind_slip
+    from marrow.blender.session import find_cage
+
+    tetmesh, _ = read_tetmesh(find_cage(obj).data)
+    idx, w = read_bind(obj.data)
+    verts = np.empty(len(mesh.vertices) * 3)
+    mesh.vertices.foreach_get("co", verts)
+    world = np.array(obj.matrix_world.to_4x4())
+    verts = verts.reshape(-1, 3) @ world[:3, :3].T + world[:3, 3]
+    slip = bind_slip(tetmesh.nodes, tetmesh.tets, verts, idx, w)
+
+    stranded = int((slip > obj.marrow.resolution).sum())
+    assert stranded > 0.01 * slip.shape[0], (
+        f"only {stranded} of {slip.shape[0]} vertices stranded - this mesh is "
+        f"supposed to defeat a 0.2 cage, so the warning would never fire"
+    )
+    assert slip.max() > 2.0 * obj.marrow.resolution

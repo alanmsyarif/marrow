@@ -22,7 +22,7 @@ from ..blender.storage import (
     write_tetmesh,
 )
 from ..core.adaptive import build_adaptive_lattice
-from ..core.bind import bind_points_iter
+from ..core.bind import bind_points_iter, bind_slip
 from ..core.coloring import color_sets_iter
 from ..core.fiber import fiber_from_polyline, tet_centroids
 from ..core.lattice import build_lattice
@@ -223,6 +223,11 @@ def _tetrahedralize_iter(context, obj):
         bind_idx, bind_w = yield from _stage(
             "binding", bind_points_iter(tetmesh.nodes, tetmesh.tets, world_verts)
         )
+        # Measured before the cage is handed over, because this is the one
+        # moment the render mesh and the rest-shape cage are both to hand.
+        slip = bind_slip(
+            tetmesh.nodes, tetmesh.tets, world_verts, bind_idx, bind_w
+        )
         write_bind(obj.data, bind_idx, bind_w)
         # Captured after the restore above, so it is the modelled shape.
         write_rest(obj.data)
@@ -287,6 +292,25 @@ def _tetrahedralize_iter(context, obj):
     )
     if blend_rows is not None:
         message += f", {blend_rows[0].shape[0]} blend rows"
+
+    # Geometry the cage never reached. Silent until now: those vertices are
+    # glued to whichever tet was nearest and ride it, so a thin tip stops
+    # being simulated and starts being dragged - it stretches into a spike or
+    # collapses to a point, depending on where that tet goes. Reported in
+    # Resolutions because that is the knob that fixes it.
+    # One percent, not one vertex: the apex of any cone pokes out of any
+    # voxel grid, and warning about four vertices in a thousand would teach
+    # people to ignore this. Measured on a tapered tentacle - a cage that
+    # covers it strands 0.4%, one that stops short of the tip strands 8.8%.
+    stranded = int((slip > spacing).sum())
+    if stranded > 0.01 * slip.shape[0]:
+        return "WARNING", (
+            f"{message}. {stranded} of {slip.shape[0]} render vertices lie "
+            f"more than one Resolution outside the cage, the worst by "
+            f"{slip.max() / spacing:.1f} Resolutions - thin features are not "
+            f"being simulated, they are being dragged. Lower Resolution, or "
+            f"turn on Adaptive and lower Min Size."
+        )
 
     # Say it here rather than let Bake refuse after the wait. The budget is
     # checked when a session is built, which is long after this point.
