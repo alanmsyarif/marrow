@@ -1,5 +1,6 @@
 import math
 
+import bmesh
 import bpy
 import numpy as np
 
@@ -77,13 +78,15 @@ def test_rerunning_replaces_the_previous_cage():
     assert len(matching) == 1, f"expected one cage, found {[o.name for o in matching]}"
 
 
-def test_a_cage_that_misses_thin_geometry_says_so():
-    """The failure this exists to stop being silent: geometry finer than
-    Resolution gets no cells, and every render vertex out there is glued to
-    whichever tet was nearest and dragged by it. Nothing said so before -
-    the cage looked fine and the tip stretched into a spike at playback."""
-    import bmesh
+def test_thin_geometry_still_gets_a_cage():
+    """A tapered spike ending far finer than Resolution.
 
+    The centre-inside test alone gives it nothing: no cell centre lands
+    inside a feature thinner than a cell, so the cage used to stop short and
+    the tip was left riding whichever tet was nearest. Cells holding a mesh
+    vertex are kept too, which covers a thin feature exactly where the mesh
+    carries the detail to describe it.
+    """
     bpy.ops.wm.read_factory_settings(use_empty=True)
     try:
         marrow.unregister()
@@ -118,9 +121,9 @@ def test_a_cage_that_misses_thin_geometry_says_so():
     obj.marrow.resolution = 0.2       # far coarser than the tip
     assert bpy.ops.marrow.tetrahedralize() == {"FINISHED"}
 
+    from marrow.blender.session import find_cage
     from marrow.blender.storage import read_bind, read_tetmesh
     from marrow.core.bind import bind_slip
-    from marrow.blender.session import find_cage
 
     tetmesh, _ = read_tetmesh(find_cage(obj).data)
     idx, w = read_bind(obj.data)
@@ -128,11 +131,30 @@ def test_a_cage_that_misses_thin_geometry_says_so():
     mesh.vertices.foreach_get("co", verts)
     world = np.array(obj.matrix_world.to_4x4())
     verts = verts.reshape(-1, 3) @ world[:3, :3].T + world[:3, 3]
-    slip = bind_slip(tetmesh.nodes, tetmesh.tets, verts, idx, w)
 
-    stranded = int((slip > obj.marrow.resolution).sum())
-    assert stranded > 0.01 * slip.shape[0], (
-        f"only {stranded} of {slip.shape[0]} vertices stranded - this mesh is "
-        f"supposed to defeat a 0.2 cage, so the warning would never fire"
+    # The cage has to reach the tip, not stop above it.
+    gap = abs(verts[:, 2].min() - tetmesh.nodes[:, 2].min())
+    assert gap < obj.marrow.resolution, (
+        f"cage stops {gap:.3f} m short of the tip"
     )
-    assert slip.max() > 2.0 * obj.marrow.resolution
+
+    slip = bind_slip(tetmesh.nodes, tetmesh.tets, verts, idx, w)
+    stranded = int((slip > obj.marrow.resolution).sum())
+    assert stranded <= 0.01 * slip.shape[0], (
+        f"{stranded} of {slip.shape[0]} vertices still lie outside the cage, "
+        f"worst by {slip.max() / obj.marrow.resolution:.1f} Resolutions"
+    )
+
+
+def test_a_hopeless_resolution_still_aborts():
+    """The vertex cells must not paper over a cage that cannot work. With no
+    cell centre inside the mesh anywhere, a shell of vertex cells would be a
+    hollow cage that simulates nothing - the abort has to survive."""
+    obj = _setup()
+    obj.marrow.resolution = 100.0
+    try:
+        bpy.ops.marrow.tetrahedralize()
+    except RuntimeError as exc:
+        assert "Lower Resolution" in str(exc), exc
+    else:
+        raise AssertionError("expected a reported error at 100.0 resolution")

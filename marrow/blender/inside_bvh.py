@@ -96,8 +96,43 @@ def cell_mask_iter(obj, spacing: float):
         if i + 1 < dims[0]:
             yield (i + 1) / dims[0]
 
+    # Only when something was solid to begin with. An empty centre mask
+    # means the cage cannot represent this mesh at all, and Tetrahedralize
+    # aborts on exactly that with a "Lower Resolution" message. Extending an
+    # empty mask with a shell of vertex cells would replace that error with a
+    # hollow cage that simulates nothing and says nothing.
+    if mask.any():
+        mask |= surface_cells(coords, bounds_min, spacing, dims)
     yield 1.0
     return mask, bounds_min
+
+
+def surface_cells(coords, bounds_min, spacing: float, dims) -> np.ndarray:
+    """Cells holding a mesh vertex, whether or not their centre is inside.
+
+    The parity test above keeps a cell when its CENTRE is inside the mesh.
+    Anything thinner than a cell has no centre inside it anywhere, so the
+    cage simply stops short - a tentacle tip, a fingertip, a horn. Those
+    render vertices then have no tet of their own and get glued to whichever
+    one was nearest, which is what drags a tip into a spike.
+
+    Bucketing the mesh's own vertices is the cheap half of a surface-overlap
+    test. It costs one vectorised pass over coordinates that _world_bvh has
+    already produced, against the three ray casts per cell the loop above
+    pays, and it covers thin features exactly where the mesh carries detail -
+    which is where a thin feature carries it.
+
+    It is the cheap half, not the whole: a triangle spanning several cells
+    with no vertex in them still leaves those cells empty. That is a coarse
+    mesh with large flat faces, where the centre test was already going to be
+    right. The case this fixes is fine geometry in a coarse cage.
+    """
+    dims = np.asarray(dims)
+    cell = np.floor((np.asarray(coords) - bounds_min) / spacing).astype(np.int64)
+    np.clip(cell, 0, dims - 1, out=cell)
+    out = np.zeros(tuple(dims), dtype=bool)
+    out[cell[:, 0], cell[:, 1], cell[:, 2]] = True
+    return out
 
 
 def cell_oracle_from_object(obj):

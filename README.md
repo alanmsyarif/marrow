@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.8.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.9.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -40,6 +40,25 @@ It works because Tetrahedralize records the rest shape in a `marrow_rest` attrib
 Note that **Free Bake is not this**. Free Bake discards the cache and the GPU memory and leaves the object tetrahedralised and deformed, ready to simulate again.
 
 Editing the mesh's topology between the two invalidates the stored shape, since the attribute is per-point. Re-tetrahedralize after any Edit Mode change.
+
+### Cage coverage
+
+The cage keeps a cell when its **centre** is inside the mesh - and that alone loses anything thinner than a cell. A tentacle tip, a fingertip, a horn: no cell centre ever lands inside one, so the cage stops short. Those render vertices get no tet of their own; binding clips them onto whichever tet was nearest and they ride it, which is what stretches a tip into a spike or collapses it to a point.
+
+So cells holding a **mesh vertex** are kept too, whether or not their centre is inside. That covers a thin feature exactly where the mesh carries the detail to describe it, and it costs one pass over vertices the voxeliser has already loaded - no extra ray casts, no change in Resolution. Measured, tet count and the share of render vertices left outside the cage:
+
+| Shape | Resolution | Tets before | Tets after | Cost | Outside before | Outside after |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cube | 0.25 | 2560 | 2560 | 0% | 0% | 0% |
+| UV sphere | 0.15 | 6220 | 7755 | +25% | 50% | 0% |
+| Suzanne | 0.12 | 6235 | 7160 | +15% | 60% | 0% |
+| Tapered tentacle | 0.05 | 7655 | 9880 | +29% | 58% | 0% |
+
+A cube pays nothing - its cells already cover it. Curved and thin shapes pay 15-30% more tets and go from half their render vertices being dragged to none of them. Reaching the same coverage on that tentacle by Resolution alone took 0.02 and 121k tets, sixteen times the cage for the same result.
+
+This is not only a thin-feature fix. Half the surface vertices of any curved mesh used to sit outside the cage and be clipped onto it rather than interpolated inside it.
+
+**Existing cages keep the old behaviour until you Tetrahedralize again.**
 
 ### Adaptive cages
 
@@ -365,7 +384,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
-- **Features thinner than Resolution get no cage.** The cage is a voxel fill, so anything finer than a cell - a tentacle tip, a fingertip, a horn - ends up with no tets at all. Render vertices out there are not simulated: they are glued to whichever tet was nearest and dragged by it, which stretches a tip into a spike or collapses it to a point. Tetrahedralize warns when more than 1% of vertices land more than a Resolution outside the cage, and names how far the worst one is. Lower Resolution, or turn on Adaptive and lower Min Size. Measured on a 3 m tapered tentacle ending at 1 cm: Resolution 0.05 left the last 30 cm uncovered, Adaptive with Min Size 0.0125 cut that to 10 cm, and Resolution 0.02 covered it outright at 119k tets.
+- **Very thin features can still outrun the cage.** The cage keeps every cell whose centre is inside the mesh, plus every cell holding a mesh vertex - so a feature thinner than a cell is covered as long as the mesh carries vertices there, which fixes tentacle tips, fingertips and horns at no change in Resolution. What it does not cover is a large flat triangle spanning cells with no vertex in them, which is a coarse mesh rather than a thin one. Tetrahedralize warns when more than 1% of render vertices land more than a Resolution outside the cage and names how far the worst one is; those vertices are not simulated, they are glued to whichever tet was nearest and dragged by it. Subdivide the mesh, lower Resolution, or turn on Adaptive.
 - **No plasticity.** Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. `mu` and `lam` vary per tet through a Stiffness Group, but every tet always wants its original shape.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.
