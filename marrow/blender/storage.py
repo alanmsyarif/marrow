@@ -16,12 +16,21 @@ COLORS_KEY = "marrow_colors"
 # (R*4 floats). Absent on a uniform cage, which has no hanging nodes.
 BLEND_KEY = "marrow_blend"
 BLEND_W_KEY = "marrow_blend_w"
-# Per-tet fiber rows, stored on the CAGE mesh like the tets: T*4 floats,
-# (dir x, dir y, dir z, arclength). An ID property rather than an attribute
-# because the cage mesh has one vertex per NODE, and there is no per-tet
-# domain to hang this on. Absent on a body with no fiber curve, which the
-# solver takes as "no fiber pass".
-FIBER_KEY = "marrow_fiber"
+# Per-tet fiber rows, stored on the CAGE mesh like the tets: T*5 floats,
+# (dir x, dir y, dir z, arclength, side). An ID property rather than an
+# attribute because the cage mesh has one vertex per NODE, and there is no
+# per-tet domain to hang this on. Absent on a body with no fiber curve,
+# which the solver takes as "no fiber pass".
+#
+# The "2" generation carries the side column, which is what lets the wave
+# bend the body rather than only squeeze it. A generation-1 blob is four
+# wide, and four and five wide are not distinguishable from the length
+# alone, so old caches must be ignored rather than guessed at - hence the
+# new name, the same rule ATTACH_IDX follows. A body with only the old key
+# reads as unfibered and the panel asks for a Tetrahedralize, which is
+# needed anyway to compute a side.
+FIBER_KEY = "marrow_fiber2"
+_LEGACY_FIBER = "marrow_fiber"
 BIND_IDX = "marrow_bind_idx"
 BIND_W = ("marrow_bind_w0", "marrow_bind_w1", "marrow_bind_w2", "marrow_bind_w3")
 REST_KEY = "marrow_rest"
@@ -94,17 +103,20 @@ def read_blend(mesh):
 
 
 def write_fiber(mesh, fiber: np.ndarray) -> None:
-    mesh[FIBER_KEY] = np.asarray(fiber, dtype=np.float32).ravel().tolist()
+    fiber = np.asarray(fiber, dtype=np.float32)
+    if fiber.ndim != 2 or fiber.shape[1] != 5:
+        raise ValueError(f"fiber rows must be (T, 5), got {fiber.shape}")
+    mesh[FIBER_KEY] = fiber.ravel().tolist()
 
 
 def read_fiber(mesh):
-    """Stored fiber rows as (T, 4), or None if this cage has none."""
+    """Stored fiber rows as (T, 5), or None if this cage has none."""
     if FIBER_KEY not in mesh.keys():
         return None
     flat = np.array(mesh[FIBER_KEY], dtype=np.float32).astype(np.float64)
-    if flat.size == 0:
+    if flat.size == 0 or flat.size % 5:
         return None
-    return flat.reshape(-1, 4)
+    return flat.reshape(-1, 5)
 
 
 def _ensure_attr(mesh, name, data_type):
@@ -178,7 +190,7 @@ def clear_marrow_data(mesh) -> None:
         attr = mesh.attributes.get(name)
         if attr is not None:
             mesh.attributes.remove(attr)
-    for key in (BLEND_KEY, BLEND_W_KEY, FIBER_KEY):
+    for key in (BLEND_KEY, BLEND_W_KEY, FIBER_KEY, _LEGACY_FIBER):
         if key in mesh.keys():
             del mesh[key]
     mesh.update()

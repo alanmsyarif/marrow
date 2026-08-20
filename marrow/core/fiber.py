@@ -27,16 +27,26 @@ def tet_centroids(nodes: np.ndarray, tets: np.ndarray) -> np.ndarray:
 
 
 def fiber_from_polyline(points: np.ndarray, centroids: np.ndarray) -> np.ndarray:
-    """Per-tet (direction, arclength) from the nearest point on a polyline.
+    """Per-tet (direction, arclength, side) from the nearest point on a polyline.
 
-    Returns (T, 4): xyz is the unit tangent of the nearest segment, w is the
-    arclength from the start of the polyline to the nearest point. A row of
-    zeros means no fiber could be assigned, which every consumer reads as
-    "skip this tet" rather than as a direction.
+    Returns (T, 5): columns 0..2 are the unit tangent of the nearest segment,
+    column 3 the arclength from the start of the polyline to the nearest
+    point, and column 4 a signed lateral offset in [-1, 1] saying which side
+    of the curve the tet sits on.
+
+    That last column is what lets the wave bend the body. A wave keyed on
+    arclength alone contracts a whole cross-section at once, which is a
+    squeeze travelling down a straight body - it cannot ask for a bend, no
+    matter how it is shaped. Real undulation is contralateral: one side
+    contracts while the other releases. The side value is what the solver
+    offsets the phase by to get that.
+
+    A row of zeros means no fiber could be assigned, which every consumer
+    reads as "skip this tet" rather than as a direction.
     """
     points = np.asarray(points, dtype=np.float64)
     centroids = np.asarray(centroids, dtype=np.float64)
-    out = np.zeros((centroids.shape[0], 4), dtype=np.float64)
+    out = np.zeros((centroids.shape[0], 5), dtype=np.float64)
     if points.ndim != 2 or points.shape[0] < 2 or centroids.shape[0] == 0:
         return out
 
@@ -72,6 +82,7 @@ def fiber_from_polyline(points: np.ndarray, centroids: np.ndarray) -> np.ndarray
     best = np.full(centroids.shape[0], np.inf)
     pick = np.zeros(centroids.shape[0], dtype=np.int64)
     t_best = np.zeros(centroids.shape[0])
+    foot = np.zeros_like(centroids)
     for s in range(starts.shape[0]):
         # einsum, not `@` or (a * b).sum(): only einsum sums the three
         # components in the order the dense form did, and only then is the
@@ -81,7 +92,52 @@ def fiber_from_polyline(points: np.ndarray, centroids: np.ndarray) -> np.ndarray
         d = np.linalg.norm(centroids - (starts[s] + t[:, None] * deltas[s]), axis=1)
         m = d < best
         best[m], pick[m], t_best[m] = d[m], s, t[m]
+        foot[m] = (starts[s] + t[:, None] * deltas[s])[m]
 
     out[:, :3] = tangents[pick]
     out[:, 3] = cumulative[pick] + t_best * lengths[pick]
+    out[:, 4] = _side_of(centroids - foot, tangents[pick])
     return out
+
+
+def _side_of(offset: np.ndarray, tangent: np.ndarray) -> np.ndarray:
+    """Signed lateral offset per tet, normalised to [-1, 1].
+
+    "Sideways" is measured in the horizontal plane: up x tangent, which is
+    the axis a body lying on the ground undulates about. A curve does not
+    carry a frame of its own that could supply this - a straight spine has
+    no curvature and therefore no binormal - so the world's up vector is
+    what breaks the tie, and it is why this bends left-and-right rather than
+    up-and-down.
+
+    Normalised by the largest offset anywhere on the body, not per station,
+    so a tet on the neutral axis reads 0 and stays in phase with both sides.
+    That is the correct answer for it: the centre of a bending body neither
+    leads nor lags.
+    """
+    up = np.array([0.0, 0.0, 1.0])
+    axis = np.cross(up, tangent)
+    norm = np.linalg.norm(axis, axis=1)
+
+    # A fiber running straight up has no left or right in the horizontal
+    # plane: up x tangent collapses and every direction around it is equally
+    # "sideways". Something has to break that tie or those tets get a zero
+    # side and bending silently switches off on exactly the body a tentacle
+    # rig uses. World +X is the pick, so a vertical spine bends towards X.
+    #
+    # Not up x tangent's usual replacement, tangent x X - that is +Y here,
+    # and it reads zero for the offsets along X that a tentacle actually has.
+    vertical = norm <= _MIN_SEGMENT
+    if np.any(vertical):
+        axis[vertical] = np.array([1.0, 0.0, 0.0])
+        norm = np.linalg.norm(axis, axis=1)
+    safe = norm > _MIN_SEGMENT
+    side = np.zeros(offset.shape[0])
+    side[safe] = np.einsum(
+        "tc,tc->t", offset[safe], axis[safe] / norm[safe, None]
+    )
+
+    scale = np.abs(side).max()
+    if scale <= _MIN_SEGMENT:
+        return side
+    return side / scale

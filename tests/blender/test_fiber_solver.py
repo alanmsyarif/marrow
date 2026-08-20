@@ -9,7 +9,7 @@ gpu.init()
 
 
 def _fibers_along_x(n_tets, phase=0.75):
-    fiber = np.zeros((n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((n_tets, 5), dtype=np.float64)
     fiber[:, 0] = 1.0
     fiber[:, 3] = phase
     return fiber

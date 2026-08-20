@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.7.2.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.8.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -77,6 +77,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Fiber** | Contract along baked fiber directions. See [Fiber](#fiber). |
 | **Curve** | Curve running along the body. Its tangent is the fiber direction, its arclength the wave phase. |
 | **Fiber Stiffness** | Resistance to stretch along the fiber, and how hard it pulls. |
+| **Bend** | How much the wave bends the body rather than only squeezing it. 0 is a pure travelling squeeze. See [Bending](#bending). |
 | **Amplitude** | Peak contraction. 0.3 shortens to 70% of rest length. |
 | **Wavelength** | Distance between crests, along the curve. Floored at 1e-4 - both the oracle and the kernel divide by it unguarded, so this is not a soft suggestion. |
 | **Speed** | Cycles per second. Travel velocity is Wavelength x Speed. |
@@ -210,6 +211,20 @@ Noise also skews the pulse itself. A cosine crest eases in and eases out at exac
 The jitter is bounded so the wave's phase always advances along the body, and the skew is bounded so a crest can never fold into two. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.
 
 Zero is the clockwork wave exactly - the noise arithmetic is skipped, not multiplied by zero - so an older scene keeps the motion it had. New bodies default to 0.35.
+
+### Bending
+
+A wave keyed on arclength alone contracts a whole cross-section at once. That is a **squeeze** travelling down a straight body - an accordion ripple - and it cannot ask for a bend however it is shaped, because there is nothing asymmetric in it to bend towards. Any bending you get from it is Euler buckling, which goes wherever it likes.
+
+Real undulation is contralateral: one flank contracts while the other releases, and that pairing travels. **Bend** is how much of that the wave does. Each tet is baked with a signed lateral offset from the curve, and Bend offsets its place in the wave by that - a quarter cycle either way, so the two flanks end up half a cycle apart. Tets on the curve itself read zero and stay in phase with both, which is the right answer for the neutral axis of a bending body: it neither leads nor lags.
+
+Measured on a 6 m cylinder, gravity only, Bend 0 against Bend 1 with every other setting identical: peak vertex difference 0.46 m, rms 0.16 m. It is not a subtle knob.
+
+**Sideways is left and right**, measured about the world's up axis, because that is the plane a body lying on the ground undulates in. A spine running straight up has no left or right in that plane, so those tets fall back to bending towards world +X - a tentacle standing on end still bends rather than silently going rigid.
+
+The side is baked at Tetrahedralize alongside the direction and arclength, so **a cage built before this existed has no side column and reads as unfibered.** Tetrahedralize again to get one; the panel will keep saying "Tetrahedralize to bake fibers" until you do.
+
+Set Bend to 0 for the muscle case - a bicep bulging along its own length wants the whole section contracting together, not one side leading the other.
 
 Contraction alone moves nothing. Locomotion is contraction plus grip, so a crawling body needs [Friction](#friction) above zero and something to push against - `tools/fiber_demo.py` builds a working scene to start from.
 

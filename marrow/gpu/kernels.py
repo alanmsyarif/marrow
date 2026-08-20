@@ -298,15 +298,29 @@ void main()
   // linearise this constraint about the wrong configuration. Deliberate,
   // not an oversight, and the oracle recomputes here too.
   if (fiber_k > 0.0 && !is_torn) {
-    vec4 fb = imageLoad(fiber, texel(t));
+    vec4 fb = imageLoad(fiber, texel(2 * t));
     vec3 a = fb.xyz;
     if (dot(a, a) > 0.5) {
       vec3 fp0 = imageLoad(p, texel(idx.x)).xyz;
       mat3 ff = shape_matrix(idx, fp0) * dm_inv;
 
+      // Which side of the curve this tet sits on, -1 to 1, zero on the
+      // neutral axis. Baked in fiber.py.
+      float side = imageLoad(fiber, texel(2 * t + 1)).x;
+
       // Position along the body, in wavelengths, and the wave's own phase.
+      //
+      // fiber_bend offsets that phase by the side, so one flank leads the
+      // other. At 1 the two flanks are half a cycle apart - one contracting
+      // while the other releases - which is what bends a body. Without it
+      // every tet at a station contracts together, and a uniform squeeze
+      // cannot ask for a bend however it is shaped: the wave travels as an
+      // accordion ripple down a straight body.
+      //
+      // A quarter, not a half, because the offset is applied either way from
+      // centre: +0.25 against -0.25 is the half cycle between the flanks.
       float x = fb.w / wave_len;
-      float u = x - wave_time * wave_speed;
+      float u = x - wave_time * wave_speed + fiber_bend * 0.25 * side;
 
       // The noise is sampled in position AND time, with a drift rate that is
       // deliberately not the wave's own.
@@ -445,6 +459,7 @@ SOLVE_PUSH = [
     ("FLOAT", "wave_time"),
     ("INT", "waveform"),
     ("FLOAT", "wave_noise"),
+    ("FLOAT", "fiber_bend"),
 ]
 
 

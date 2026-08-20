@@ -431,6 +431,19 @@ class MarrowSettings(bpy.types.PropertyGroup):
         soft_min=-10.0,
         soft_max=10.0,
     )
+    fiber_bend: bpy.props.FloatProperty(
+        name="Bend",
+        description=(
+            "How much the wave bends the body rather than only squeezing "
+            "it. One flank contracts while the other releases, which is how "
+            "a snake undulates. 0 contracts each cross-section as a whole, "
+            "so the wave travels as an accordion ripple down a straight "
+            "body. Bending is left-and-right, about the world's up axis"
+        ),
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
     wave_noise: bpy.props.FloatProperty(
         name="Noise",
         description=(
@@ -556,6 +569,7 @@ class MARROW_PT_panel(bpy.types.Panel):
             column.label(text="Tetrahedralize to bake fibers", icon="INFO")
         else:
             column.prop(settings, "fiber_stiffness")
+            column.prop(settings, "fiber_bend")
             column.prop(settings, "wave_amplitude")
             column.prop(settings, "wave_length")
             column.prop(settings, "wave_speed")

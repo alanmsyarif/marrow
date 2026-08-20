@@ -28,7 +28,7 @@ PUSH = SOLVE_PUSH
 
 def _fibers(n_tets, phase=0.75):
     """Every tet along +X at one phase, so the whole cage fires together."""
-    fiber = np.zeros((n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((n_tets, 5), dtype=np.float64)
     fiber[:, 0] = 1.0
     fiber[:, 3] = phase
     return fiber
@@ -80,6 +80,7 @@ def _run_solve(mesh, state, params, h, fiber, wave_time=0.0, torn=None):
         shader.uniform_float("wave_time", wave_time)
         shader.uniform_int("waveform", params.waveform)
         shader.uniform_float("wave_noise", params.wave_noise)
+        shader.uniform_float("fiber_bend", params.fiber_bend)
         gpu.compute.dispatch(shader, (end - begin + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)
@@ -127,7 +128,7 @@ def test_fiber_matches_oracle_with_a_smooth_wave_in_motion():
         wave_amp=0.35, wave_len=0.4, wave_speed=1.5, waveform=0,
     )
     h = params.dt / params.substeps
-    fiber = np.zeros((BLOCK.n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((BLOCK.n_tets, 5), dtype=np.float64)
     rng = np.random.default_rng(7)
     dirs = rng.normal(size=(BLOCK.n_tets, 3))
     fiber[:, :3] = dirs / np.linalg.norm(dirs, axis=1)[:, None]
@@ -211,7 +212,7 @@ def test_noisy_wave_matches_oracle():
         wave_noise=0.75,
     )
     h = params.dt / params.substeps
-    fiber = np.zeros((BLOCK.n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((BLOCK.n_tets, 5), dtype=np.float64)
     rng = np.random.default_rng(19)
     dirs = rng.normal(size=(BLOCK.n_tets, 3))
     fiber[:, :3] = dirs / np.linalg.norm(dirs, axis=1)[:, None]
@@ -269,4 +270,77 @@ def test_noise_at_maximum_amplitude_matches_oracle():
         _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.63),
         TOL,
         "noise against the amplitude clamp",
+    )
+
+
+def test_bend_matches_oracle():
+    """The side column rides the second texel of each fiber pair. If the
+    kernel indexed it as one texel per tet it would read a neighbour's
+    direction as a side and still look plausible on screen."""
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.4, wave_len=0.8, wave_speed=1.0, waveform=0,
+        fiber_bend=1.0,
+    )
+    h = params.dt / params.substeps
+    fiber = _fibers(BLOCK.n_tets)
+    fiber[:, 3] = np.linspace(0.0, 3.0, BLOCK.n_tets)
+    # Every tet a different side, so a mis-indexed read cannot coincide.
+    fiber[:, 4] = np.linspace(-1.0, 1.0, BLOCK.n_tets)
+    gpu_state, cpu_state = _paired_states(BLOCK, lambda n: n)
+    assert_close(
+        _run_solve(BLOCK, gpu_state, params, h, fiber, wave_time=0.29),
+        _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.29),
+        TOL,
+        "contralateral bend",
+    )
+
+
+def test_bend_with_noise_matches_oracle():
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.6, wave_len=0.5, wave_speed=1.4, waveform=0,
+        wave_noise=0.8, fiber_bend=0.7,
+    )
+    h = params.dt / params.substeps
+    rng = np.random.default_rng(23)
+    fiber = np.zeros((BLOCK.n_tets, 5), dtype=np.float64)
+    dirs = rng.normal(size=(BLOCK.n_tets, 3))
+    fiber[:, :3] = dirs / np.linalg.norm(dirs, axis=1)[:, None]
+    fiber[:, 3] = rng.uniform(0.0, 2.0, size=BLOCK.n_tets)
+    fiber[:, 4] = rng.uniform(-1.0, 1.0, size=BLOCK.n_tets)
+
+    def squash(nodes):
+        nodes[:, 2] *= 0.88
+        return nodes
+
+    gpu_state, cpu_state = _paired_states(BLOCK, squash)
+    assert_close(
+        _run_solve(BLOCK, gpu_state, params, h, fiber, wave_time=0.41),
+        _run_oracle(BLOCK, cpu_state, params, h, fiber, wave_time=0.41),
+        TOL,
+        "bend and noise together",
+    )
+
+
+def test_bend_zero_ignores_the_side_column():
+    """Inert by default and exactly inert: a cage baked with sides but Bend
+    left at zero must solve as if the column were not there."""
+    params = SolverParams(
+        gravity=(0.0, 0.0, 0.0), fiber_k=1.0e4,
+        wave_amp=0.4, wave_len=0.8, wave_speed=1.0, waveform=0,
+    )
+    h = params.dt / params.substeps
+    sided = _fibers(BLOCK.n_tets)
+    sided[:, 3] = np.linspace(0.0, 3.0, BLOCK.n_tets)
+    sided[:, 4] = np.linspace(-1.0, 1.0, BLOCK.n_tets)
+    flat = sided.copy()
+    flat[:, 4] = 0.0
+    a, _ = _paired_states(BLOCK, lambda n: n)
+    b, _ = _paired_states(BLOCK, lambda n: n)
+    assert_close(
+        _run_solve(BLOCK, a, params, h, sided),
+        _run_solve(BLOCK, b, params, h, flat),
+        TOL,
+        "bend off must ignore side",
     )

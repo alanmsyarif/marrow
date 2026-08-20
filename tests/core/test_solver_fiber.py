@@ -16,7 +16,7 @@ CUBE = build_lattice(np.zeros(3), 1.0, np.ones((1, 1, 1), dtype=bool))
 
 def _fibers_along_x(n_tets, phase=0.75):
     """Every tet pulls along +X, all at the same phase so they fire together."""
-    fiber = np.zeros((n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((n_tets, 5), dtype=np.float64)
     fiber[:, 0] = 1.0
     fiber[:, 3] = phase
     return fiber
@@ -94,7 +94,7 @@ def test_zero_fiber_stiffness_reproduces_the_current_solve():
 
 def test_a_zero_direction_row_is_skipped():
     dm_inv, rest_vol = precompute(CUBE.nodes, CUBE.tets)
-    fiber = np.zeros((CUBE.n_tets, 4), dtype=np.float64)
+    fiber = np.zeros((CUBE.n_tets, 5), dtype=np.float64)
     params = SolverParams(
         gravity=(0.0, 0.0, 0.0), mu=0.0, lam=0.0,
         fiber_k=1.0e4, wave_amp=0.9, wave_len=1.0, waveform=1,
@@ -172,7 +172,7 @@ def test_fiber_gradient_is_not_symmetric_under_a_diagonal_direction():
     tets = np.array([[0, 1, 2, 3]], dtype=np.int64)
     dm_inv, rest_vol = precompute(nodes, tets)
 
-    fiber = np.array([[1.0, 1.0, 0.0, 0.75]], dtype=np.float64)
+    fiber = np.array([[1.0, 1.0, 0.0, 0.75, 0.0]], dtype=np.float64)
     fiber[:, :3] /= np.linalg.norm(fiber[:, :3])
 
     params = SolverParams(
@@ -420,3 +420,61 @@ def test_noise_skews_the_pulse():
     assert ratios.min() < 0.85 and ratios.max() > 1.15, (
         f"asymmetry only reaches {ratios.min():.3f}..{ratios.max():.3f}"
     )
+
+
+def test_bend_puts_the_two_flanks_half_a_cycle_apart():
+    """The whole point of the side column. At bend 1 one flank contracts
+    while the other releases, which is what bends a body; without it every
+    tet at a station contracts together and the wave can only squeeze."""
+    params = SolverParams(
+        wave_amp=0.5, wave_len=1.0, wave_speed=0.0, fiber_bend=1.0
+    )
+    left = fiber_activation(0.0, 0.0, params, side=1.0)
+    right = fiber_activation(0.0, 0.0, params, side=-1.0)
+    # side +1 lands at phase +0.25, side -1 at -0.25: half a cycle apart, so
+    # the smooth pulse reads the same height on opposite slopes.
+    assert abs(left - right) < 1e-12
+    centre = fiber_activation(0.0, 0.0, params, side=0.0)
+    assert abs(left - centre) > 0.2, "the flanks must differ from the centre"
+
+
+def test_bend_drives_the_flanks_in_opposition():
+    """Sampled across a whole cycle, one flank shortening while the other
+    lengthens is the signature. Correlation must be strongly negative."""
+    params = SolverParams(
+        wave_amp=0.5, wave_len=1.0, wave_speed=1.0, fiber_bend=1.0
+    )
+    ts = np.linspace(0.0, 4.0, 400)
+    left = np.array([fiber_activation(0.0, t, params, side=1.0) for t in ts])
+    right = np.array([fiber_activation(0.0, t, params, side=-1.0) for t in ts])
+    r = np.corrcoef(left, right)[0, 1]
+    assert r < -0.8, f"flanks correlate at {r:+.3f} - they are not opposed"
+
+
+def test_bend_zero_contracts_a_station_together():
+    """Inert by default, and inert exactly: with bend off, side must not
+    reach the arithmetic at all."""
+    params = SolverParams(wave_amp=0.5, wave_len=1.0, wave_speed=0.7)
+    for side in (-1.0, -0.3, 0.0, 0.6, 1.0):
+        for t in (0.0, 0.4, 1.9):
+            assert fiber_activation(0.0, t, params, side=side) == (
+                fiber_activation(0.0, t, params)
+            )
+
+
+def test_bend_scales_between_squeeze_and_undulation():
+    params_half = SolverParams(
+        wave_amp=0.5, wave_len=1.0, wave_speed=1.0, fiber_bend=0.5
+    )
+    params_full = SolverParams(
+        wave_amp=0.5, wave_len=1.0, wave_speed=1.0, fiber_bend=1.0
+    )
+    ts = np.linspace(0.0, 4.0, 400)
+
+    def spread(p):
+        left = np.array([fiber_activation(0.0, t, p, side=1.0) for t in ts])
+        right = np.array([fiber_activation(0.0, t, p, side=-1.0) for t in ts])
+        return np.abs(left - right).mean()
+
+    assert spread(params_half) < spread(params_full)
+    assert spread(params_half) > 0.0

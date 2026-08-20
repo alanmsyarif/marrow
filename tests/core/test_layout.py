@@ -132,13 +132,30 @@ def test_unpack_vec3_rejects_a_count_the_image_cannot_hold():
         unpack_vec3(img, TEX_WIDTH * 99)
 
 
-def test_pack_fiber_is_one_texel_per_tet():
+def test_pack_fiber_is_two_texels_per_tet():
     from marrow.core.layout import pack_fiber
 
-    fiber = np.array([[1.0, 0.0, 0.0, 0.25], [0.0, 1.0, 0.0, 1.75]])
+    fiber = np.array(
+        [[1.0, 0.0, 0.0, 0.25, -1.0], [0.0, 1.0, 0.0, 1.75, 0.5]]
+    )
     image = pack_fiber(fiber)
     flat = image.reshape(-1, 4)
     assert image.dtype == np.float32
     assert np.allclose(flat[0], [1.0, 0.0, 0.0, 0.25])
-    assert np.allclose(flat[1], [0.0, 1.0, 0.0, 1.75])
-    assert np.allclose(flat[2], 0.0), "unused texels must be zero, which reads as no fiber"
+    assert flat[1][0] == -1.0, "side rides the second texel of the pair"
+    assert np.allclose(flat[2], [0.0, 1.0, 0.0, 1.75])
+    assert flat[3][0] == 0.5
+    assert np.allclose(flat[4], 0.0), "unused texels must be zero, which reads as no fiber"
+
+
+def test_pack_fiber_rejects_the_old_four_wide_rows():
+    """Generation 1 rows carry no side column. Packing them would put an
+    arclength where the kernel reads a direction."""
+    from marrow.core.layout import pack_fiber
+
+    try:
+        pack_fiber(np.zeros((3, 4)))
+    except ValueError as exc:
+        assert "(T, 5)" in str(exc)
+    else:
+        raise AssertionError("expected a ValueError for four-wide rows")

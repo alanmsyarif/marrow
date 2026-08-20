@@ -489,6 +489,7 @@ def _params_from(settings) -> SolverParams:
         wave_speed=float(settings.wave_speed),
         waveform=0 if settings.waveform == "SMOOTH" else 1,
         wave_noise=float(settings.wave_noise),
+        fiber_bend=float(settings.fiber_bend),
     )
 
 

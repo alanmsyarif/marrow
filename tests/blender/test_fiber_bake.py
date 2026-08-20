@@ -83,7 +83,7 @@ def test_tetrahedralize_bakes_fibers_when_a_curve_is_set():
     assert cage is not None
     fiber = read_fiber(cage.data)
     assert fiber is not None, "a curve was set but no fibers were baked"
-    assert fiber.shape[1] == 4
+    assert fiber.shape[1] == 5
     lengths = np.linalg.norm(fiber[:, :3], axis=1)
     assert np.allclose(lengths, 1.0, atol=1e-5), "directions must be unit length"
     assert np.allclose(fiber[:, 1:3], 0.0, atol=1e-5), "a +X curve gives +X fibers"

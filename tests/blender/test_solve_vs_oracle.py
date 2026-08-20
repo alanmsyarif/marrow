@@ -73,6 +73,7 @@ def _run_solve(mesh, state, params, h):
         shader.uniform_float("wave_time", 0.0)
         shader.uniform_int("waveform", 0)
         shader.uniform_float("wave_noise", 0.0)
+        shader.uniform_float("fiber_bend", 0.0)
         gpu.compute.dispatch(shader, (end - begin + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)

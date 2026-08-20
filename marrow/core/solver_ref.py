@@ -35,6 +35,11 @@ class SolverParams:
     # bites. Zero is not merely the default but the bit-identical path: the
     # noise arithmetic is skipped entirely, not multiplied by zero.
     wave_noise: float = 0.0
+    # Contralateral drive, 0..1. Offsets the wave phase by the tet's side of
+    # the curve, so one flank contracts while the other releases and the body
+    # bends. Zero contracts every tet at a station together, which squeezes
+    # rather than bends.
+    fiber_bend: float = 0.0
 
 
 @dataclass
@@ -154,7 +159,9 @@ def wobble(u):
     )
 
 
-def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
+def fiber_activation(
+    phase: float, t: float, params: SolverParams, side: float = 0.0
+) -> float:
     """Target stretch along the fiber for one tet at time ``t``.
 
     1.0 is rest. Below 1.0 the tet is being told to shorten. The phase
@@ -170,8 +177,11 @@ def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
     the first second.
     """
     # Position along the body in wavelengths, and the wave's own phase.
+    # fiber_bend offsets it by the tet's side of the curve, a quarter cycle
+    # either way, so the two flanks end up half a cycle apart and the body
+    # bends instead of only squeezing. See the GLSL twin.
     x = phase / params.wave_len
-    u = x - t * params.wave_speed
+    u = x - t * params.wave_speed + params.fiber_bend * 0.25 * side
 
     # Sampled in position AND time, at a drift rate that is not the wave's.
     # A noise driven from u alone makes the activation a function of (x - v t),
@@ -398,7 +408,10 @@ def solve_constraints(state, tets, dm_inv, rest_vol, params, h,
                     axis=1,
                 )
                 f = ds @ dm_inv[t_i]
-                s = fiber_activation(float(fiber[t_i, 3]), t, params)
+                s = fiber_activation(
+                    float(fiber[t_i, 3]), t, params,
+                    side=float(fiber[t_i, 4]) if fiber.shape[1] > 4 else 0.0,
+                )
                 fa = f @ a
                 fiber_len = float(np.linalg.norm(fa))
                 if fiber_len > 1e-12:

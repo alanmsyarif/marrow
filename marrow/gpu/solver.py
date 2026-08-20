@@ -174,7 +174,7 @@ class GPUSolver:
         # kernel needs every image bound, and a blank one reads as "no tet
         # has a fiber" at the cost of one texel per tet.
         if fiber is None:
-            fiber_rows = np.zeros((mesh.n_tets, 4), dtype=np.float64)
+            fiber_rows = np.zeros((mesh.n_tets, 5), dtype=np.float64)
         else:
             fiber_rows = np.asarray(fiber, dtype=np.float64)[self._tet_order]
         self.tex_fiber = upload_verified(pack_fiber(fiber_rows))
@@ -470,6 +470,7 @@ class GPUSolver:
             self.sh_solve.uniform_float("wave_time", self.sim_time)
             self.sh_solve.uniform_int("waveform", int(self.params.waveform))
             self.sh_solve.uniform_float("wave_noise", self.params.wave_noise)
+            self.sh_solve.uniform_float("fiber_bend", self.params.fiber_bend)
             gpu.compute.dispatch(self.sh_solve, _groups(end - begin), 1, 1)
 
         self._dispatch_blend()

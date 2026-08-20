@@ -137,15 +137,27 @@ def pack_rest(dm_inv: np.ndarray, rest_vol: np.ndarray) -> np.ndarray:
 
 
 def pack_fiber(fiber: np.ndarray) -> np.ndarray:
-    """One texel per tet: rest-space direction in rgb, arclength in a.
+    """Two texels per tet: 2t is (direction xyz, arclength), 2t+1 is (side).
+
+    Five floats, so it does not fit one RGBA texel. Two texels of one image
+    rather than a second image, the same trade pack_rest and pack_blend
+    already make: a compute shader here gets eight image units and the solve
+    kernel is at seven, so the last one is worth more than the texels this
+    wastes.
 
     A zero row is not padding to be trimmed - it is the signal that a tet
     was never assigned a fiber, and the kernel skips it. Which means the
     blank tail of the image is already correct for a partly-fibered cage.
     """
     fiber = np.asarray(fiber, dtype=np.float64)
-    image = _blank(fiber.shape[0])
-    _write(image, fiber.astype(np.float32))
+    if fiber.ndim != 2 or fiber.shape[1] != 5:
+        raise ValueError(f"fiber must be (T, 5), got {fiber.shape}")
+    n_tets = fiber.shape[0]
+    image = _blank(2 * n_tets)
+    values = np.zeros((2 * n_tets, 4), dtype=np.float64)
+    values[0::2, :] = fiber[:, :4]
+    values[1::2, 0] = fiber[:, 4]
+    _write(image, values.astype(np.float32))
     return image
 
 
