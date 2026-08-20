@@ -343,6 +343,23 @@ void main()
       }
 
       float cycle = fract(u + jitter);
+
+      // Shape jitter. Timing and depth were jittered above, but every crest
+      // was still the same perfectly symmetric cosine hump - easing in and
+      // out at exactly the same rate, which no muscle does. Warping cycle
+      // before the pulse skews it, and driving the skew from its own field
+      // means no two crests have the same profile.
+      //
+      // sin vanishes at both ends of the cycle, so the warp cannot move the
+      // wrap point and the pulse stays continuous across it. Bounded at
+      // 0.12 against the 1/(2*pi) = 0.159 where d(warped)/d(cycle) reaches
+      // zero: past that the warp folds and one crest becomes two.
+      if (wave_noise > 0.0) {
+        float skew = wave_noise * 0.12
+               * wobble(x * 0.8 + wave_time * (0.9 - 0.5 * wave_speed) + 5.0);
+        cycle = cycle + skew * sin(6.2831853 * cycle);
+      }
+
       // Smooth is muscle; square is the literal (@Frame%10)/10 blink the
       // technique came from.
       float pulse = (waveform == 0)

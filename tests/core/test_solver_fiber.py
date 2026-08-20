@@ -363,3 +363,60 @@ def test_wobble_does_not_repeat_over_the_useful_range():
     base = wobble(u)
     for shift in (2 * np.pi, 2 * np.pi / 2.3941, 2 * np.pi / 5.1287):
         assert np.abs(wobble(u + shift) - base).max() > 0.3, shift
+
+
+def test_the_pulse_stays_single_peaked():
+    """The skew warps the cycle before the cosine. Past 1/(2*pi) = 0.159 that
+    warp folds and one contraction becomes two, which would read as the wave
+    doubling its frequency in patches. The 0.12 coefficient is the margin,
+    and this is what holds it."""
+    ts = np.linspace(0.0, 20.0, 20000)
+    for noise in (0.25, 0.5, 0.75, 1.0):
+        params = SolverParams(
+            wave_amp=0.6, wave_len=1.5, wave_speed=1.2, wave_noise=noise
+        )
+        v = np.array([fiber_activation(2.0, t, params) for t in ts])
+        low = np.nonzero((v[1:-1] < v[:-2]) & (v[1:-1] < v[2:]))[0] + 1
+        high = np.nonzero((v[1:-1] > v[:-2]) & (v[1:-1] > v[2:]))[0] + 1
+        # One release between every pair of contractions, and no more.
+        assert abs(len(low) - len(high)) <= 1, (
+            f"noise {noise}: {len(low)} contractions against {len(high)} "
+            f"releases - the skew has folded a crest in two"
+        )
+
+
+def test_the_pulse_is_symmetric_without_noise():
+    """The converse of the skew test: with noise off, contraction and
+    release take exactly as long as each other."""
+    params = SolverParams(wave_amp=0.9, wave_len=1.5, wave_speed=1.2)
+    ts = np.linspace(0.0, 40.0, 40000)
+    v = np.array([fiber_activation(2.0, t, params) for t in ts])
+    low = np.nonzero((v[1:-1] < v[:-2]) & (v[1:-1] < v[2:]))[0] + 1
+    high = np.nonzero((v[1:-1] > v[:-2]) & (v[1:-1] > v[2:]))[0] + 1
+    ratios = [
+        (ts[c] - ts[high[high < c][-1]]) / (ts[high[high > c][0]] - ts[c])
+        for c in low
+        if len(high[high < c]) and len(high[high > c])
+    ]
+    assert max(abs(r - 1.0) for r in ratios) < 0.01
+
+
+def test_noise_skews_the_pulse():
+    """Every crest the same shape is what 'too perfect' meant. Contraction
+    and release must stop taking the same time as each other."""
+    params = SolverParams(
+        wave_amp=0.9, wave_len=1.5, wave_speed=1.2, wave_noise=0.35
+    )
+    ts = np.linspace(0.0, 40.0, 40000)
+    v = np.array([fiber_activation(2.0, t, params) for t in ts])
+    low = np.nonzero((v[1:-1] < v[:-2]) & (v[1:-1] < v[2:]))[0] + 1
+    high = np.nonzero((v[1:-1] > v[:-2]) & (v[1:-1] > v[2:]))[0] + 1
+    ratios = np.array([
+        (ts[c] - ts[high[high < c][-1]]) / (ts[high[high > c][0]] - ts[c])
+        for c in low
+        if len(high[high < c]) and len(high[high > c])
+    ])
+    assert ratios.std() > 0.05, f"pulse shape spread only {ratios.std():.4f}"
+    assert ratios.min() < 0.85 and ratios.max() > 1.15, (
+        f"asymmetry only reaches {ratios.min():.3f}..{ratios.max():.3f}"
+    )

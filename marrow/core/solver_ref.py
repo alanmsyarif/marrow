@@ -190,6 +190,16 @@ def fiber_activation(phase: float, t: float, params: SolverParams) -> float:
         amp = float(np.clip(params.wave_amp * gain, 0.0, 0.95))
 
     cycle = (u + jitter) % 1.0
+
+    # Shape jitter: skew the pulse so it does not ease in and out at the same
+    # rate. sin vanishes at both ends of the cycle, so this cannot move the
+    # wrap point. Bounded well under 1/(2*pi), where the warp would fold.
+    if params.wave_noise > 0.0:
+        skew = params.wave_noise * 0.12 * wobble(
+            x * 0.8 + t * (0.9 - 0.5 * params.wave_speed) + 5.0
+        )
+        cycle = cycle + skew * np.sin(2.0 * np.pi * cycle)
+
     if params.waveform == 0:
         pulse = 0.5 * (1.0 - np.cos(2.0 * np.pi * cycle))
     else:

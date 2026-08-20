@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.7.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.7.2.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -199,7 +199,15 @@ So the noise is sampled in position *and* time, at a drift rate that is delibera
 
 Up to 0.7 the mean beat interval stays at the Wavelength and Speed you asked for, so Noise perturbs the wave rather than quietly retuning it. At 1.0 it is strong enough to merge and split crests outright, which is why the mean drops; that is the intended extreme, not a bug.
 
-The jitter is bounded so the wave's phase always advances along the body. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.
+Noise also skews the pulse itself. A cosine crest eases in and eases out at exactly the same rate, and no muscle does that - it snaps into the contraction and drifts out of it. The warp that skews it is driven by its own field, so no two crests share a profile. Contraction time over release time, measured across 50-odd crests:
+
+| Noise | Mean | Range |
+| --- | --- | --- |
+| 0.00 | 1.000 | 0.998 to 1.002 |
+| 0.35 | 1.003 | 0.741 to 1.392 |
+| 1.00 | 1.128 | 0.312 to 4.088 |
+
+The jitter is bounded so the wave's phase always advances along the body, and the skew is bounded so a crest can never fold into two. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.
 
 Zero is the clockwork wave exactly - the noise arithmetic is skipped, not multiplied by zero - so an older scene keeps the motion it had. New bodies default to 0.35.
 
