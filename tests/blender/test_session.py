@@ -172,3 +172,85 @@ def test_re_tetrahedralizing_clears_the_old_glue_rows():
     assert bpy.ops.marrow.tetrahedralize() == {"FINISHED"}
     assert not has_legacy_blend(find_cage(obj).data)
     MarrowSession(obj)  # builds without raising
+
+
+def _world_centre(obj):
+    n = len(obj.data.vertices)
+    co = np.empty(n * 3)
+    obj.data.vertices.foreach_get("co", co)
+    m = np.array(obj.matrix_world.to_4x4())
+    return (co.reshape(-1, 3) @ m[:3, :3].T + m[:3, 3]).mean(axis=0)
+
+
+def _played(obj, frames=6):
+    from marrow.blender import handlers
+
+    # SESSIONS is keyed by object name and survives read_factory_settings, so
+    # a previous cube leaves a live session the handler would reuse. Other
+    # modules in this suite clear it for the same reason.
+    handlers.free_all()
+    scene = bpy.context.scene
+    scene.frame_start, scene.frame_end = 1, frames
+    try:
+        for f in range(1, frames + 1):
+            scene.frame_set(f)
+        return _world_centre(obj)
+    finally:
+        handlers.unregister_handler()
+
+
+def test_moving_the_object_and_restarting_moves_the_simulation():
+    """Cage nodes are stored in the world frame Tetrahedralize saw. Without
+    rebasing, moving the object left the body simulating and drawing where it
+    used to be while its origin sat somewhere else - the mesh visibly
+    detached from its own gizmo."""
+    obj = _tetrahedralised_cube()
+    obj.marrow.ground_enabled = False
+    obj.location = (5.0, 3.0, 0.0)
+    bpy.context.view_layer.update()
+
+    centre = _played(obj)
+    assert abs(centre[0] - 5.0) < 0.05 and abs(centre[1] - 3.0) < 0.05, (
+        f"body did not follow the object: centre {np.round(centre, 3)}"
+    )
+
+
+def test_rotating_the_object_and_restarting_turns_the_simulation():
+    obj = _tetrahedralised_cube()
+    obj.marrow.ground_enabled = False
+    obj.location = (0.0, 4.0, 0.0)
+    obj.rotation_euler = (0.0, 0.0, 1.5707963)
+    bpy.context.view_layer.update()
+
+    centre = _played(obj)
+    assert abs(centre[1] - 4.0) < 0.05, (
+        f"a rotated object should still sit at its own origin: "
+        f"{np.round(centre, 3)}"
+    )
+
+
+def test_scaling_after_tetrahedralize_is_refused():
+    """A scaled delta would resize the cage under a rest shape measured
+    before it, changing both the mass and what Stiffness means. Saying so
+    beats simulating a different object."""
+    obj = _tetrahedralised_cube()
+    obj.scale = (2.0, 2.0, 2.0)
+    bpy.context.view_layer.update()
+    try:
+        MarrowSession(obj)
+    except ValueError as exc:
+        assert "scale" in str(exc).lower(), f"unhelpful message: {exc}"
+    else:
+        raise AssertionError("a scaled object should be refused")
+
+
+def test_an_untouched_object_is_unaffected():
+    """The identity case has to stay exactly as it was - no rebase, no
+    rounding through a matrix that is not doing anything."""
+    obj = _tetrahedralised_cube()
+    obj.marrow.ground_enabled = False
+    centre = _played(obj)
+    # Not zero: the solver is float32 and a readback lands a few parts in a
+    # hundred thousand off. Three orders below that, and five below the 5.0
+    # the rebase exists to remove.
+    assert np.linalg.norm(centre[:2]) < 1e-3, np.round(centre, 6)

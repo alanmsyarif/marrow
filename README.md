@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.0.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.1.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -308,6 +308,10 @@ The group is painted on the render mesh, because that is the geometry you can se
 A pin is zero inverse mass, and every pass in the solver already defers to it. Predict skips the gravity step, integrate holds the position and the velocity both, and the collider and attachment kernels each check it first: a pin outranks a collider, and a pin outranks the armature. Nothing pushes a pinned node anywhere.
 
 **A weight below 1.0 is not a partial hold.** It scales inverse mass, so 0.5 is a node with twice the mass, not a node half held - gravity is an acceleration, so a heavy node still falls at g. What the falloff buys is the boundary. The blend across the edge of a painted region makes the transition nodes progressively heavier instead of dropping a hard mass discontinuity into the middle of the material, which shows as a stress ring. Paint the region you want held at a solid 1.0 and let the blend feather the edge.
+
+**Moving the object takes effect on the next restart.** The cage is built in the world frame Tetrahedralize saw, and until 2.1 it stayed there: move the object and the body went on simulating and drawing where it used to be, visibly detached from its own origin. Now the solver rebases into the object current transform every time it is rebuilt, so the flow is move it, scrub to the start frame, and the body is there.
+
+Sampled at the rebuild, not per frame - which is what keeps the object transform out of the animation. An animated object still cannot drive the simulation; only the transform standing at restart is read. Rotation and translation are followed; a **scale** is refused with a message, because resizing the cage under a rest shape measured before it would silently change both the mass and what Stiffness means. Apply the scale, or Tetrahedralize again.
 
 Pins anchor in the world frame the body was tetrahedralized in - the same rule as the bind and attachment data - so moving the object afterwards does not drag the pin along with it. That is the point on an animated character: a pinned foot stays nailed where it was while the rest of the body is free to be driven. Changing the Pin Group or Follows Animation mid-simulation takes effect on the next frame, the same as Attachment - all three change what the solver is built from. Repainting weights *inside* a group that is already selected does not: the setting itself has not changed, so nothing knows to rebuild. Return to the start frame in Live, or Free and bake again after a Bake.
 

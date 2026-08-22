@@ -127,7 +127,7 @@ def ensure_weights(obj, tetmesh):
     return idx, w
 
 
-def sample_targets(obj, idx, w):
+def sample_targets(obj, idx, w, frame=None):
     """This frame's world-space targets for every cage node.
 
     Sampling has to see the armature deforming the REST shape, but Marrow
@@ -223,23 +223,27 @@ def sample_targets(obj, idx, w):
         finally:
             evaluated.to_mesh_clear()
         verts = verts.reshape(-1, 3)
-        # Targets live in the solver's frame - the world frame at
-        # tetrahedralize time, kept on the cage as the inverse of
-        # matrix_parent_inverse - not in the object's current world frame.
+        # Targets live in the SOLVER frame, which the caller passes in.
         # The evaluated mesh is local, the same space the object-space
-        # weights were measured against, so the bind matrix is the only
-        # transform in the blend. Moving the object after Tetrahedralize
-        # therefore cannot scramble the targets, matching the rest of
-        # Marrow: the simulation stays where it was tetrahedralized.
-        from ..blender.session import find_cage
+        # weights were measured against, so that matrix is the only
+        # transform in the blend.
+        #
+        # Passed rather than read live, and this is the whole of why an
+        # animated object transform cannot drive the simulation: the session
+        # samples its frame once when the solver is built and hands the same
+        # matrix back every frame after. Reading obj.matrix_world here
+        # instead would turn the object transform into an animation input.
+        if frame is None:
+            from ..blender.session import find_cage
 
-        cage = find_cage(obj)
-        if cage is None:
-            raise ValueError(
-                f"{obj.name!r} has no Marrow cage. Run Tetrahedralize first."
-            )
-        bind = np.array(cage.matrix_parent_inverse.inverted().to_4x4())
-        bind_verts = verts @ bind[:3, :3].T + bind[:3, 3]
+            cage = find_cage(obj)
+            if cage is None:
+                raise ValueError(
+                    f"{obj.name!r} has no Marrow cage. Run Tetrahedralize first."
+                )
+            frame = np.array(cage.matrix_parent_inverse.inverted().to_4x4())
+        frame = np.asarray(frame, dtype=np.float64)
+        bind_verts = verts @ frame[:3, :3].T + frame[:3, 3]
         targets = targets_from(idx, w, bind_verts)
     finally:
         for m in swapped:

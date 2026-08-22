@@ -138,6 +138,9 @@ class MarrowSession:
         # allocates a blank row per tet either way, so the fiber pass is
         # dead rather than absent.
         self.fiber = read_fiber(cage_obj.data)
+        # The world matrix the solver runs in. Replaced at every build with
+        # the object current transform, so a restart follows a move.
+        self.sim_world = np.eye(4)
         self.bind_idx, self.bind_w = read_bind(obj.data)
         self._build_solver()
 
@@ -272,9 +275,67 @@ class MarrowSession:
         node_scale = softest + (1.0 - softest) * np.clip(weights, 0.0, 1.0)
         self.region = tet_scalar(node_scale, self.tetmesh.tets)
 
+    def _sample_frame(self):
+        """The world matrix the solver is about to run in, and the rigid move
+        from the cage bind frame into it.
+
+        Cage nodes are stored in the world frame Tetrahedralize saw, and that
+        frame is kept on the cage as the inverse of matrix_parent_inverse. If
+        the object has been moved or turned since, the two disagree, and the
+        body simulates and draws where it used to be while its origin sits
+        somewhere else.
+
+        Sampled here rather than per frame, which is the entire difference
+        between "move the object and scrub to the start" and "the object
+        transform is an animation channel". _refresh_targets reuses whatever
+        this returned, so an animated transform still cannot drive anything.
+
+        Returns (world, delta) as 4x4 arrays, both identity-safe.
+        """
+        import bpy
+
+        obj = bpy.data.objects.get(self.object_name)
+        cage = find_cage(obj) if obj is not None else None
+        if obj is None or cage is None:
+            return np.eye(4), np.eye(4)
+        world = np.array(obj.matrix_world.to_4x4())
+        delta = np.array(
+            (obj.matrix_world @ cage.matrix_parent_inverse).to_4x4()
+        )
+        linear = delta[:3, :3]
+        # Rotation and translation only. A scaled delta would resize the cage
+        # under a rest shape measured before it, which silently changes both
+        # the mass and what Stiffness means - refuse rather than quietly
+        # simulate a different object.
+        if not np.allclose(linear @ linear.T, np.eye(3), atol=1e-4):
+            raise ValueError(
+                f"{obj.name!r} has been scaled since Tetrahedralize. Marrow "
+                f"can follow a move or a rotation, but not a scale - apply "
+                f"the scale, or Tetrahedralize again."
+            )
+        return world, delta
+
+    def _rebased(self, delta):
+        """The cage and the fiber directions, moved into the solver frame."""
+        from ..core.tetmesh import TetMesh
+
+        if np.allclose(delta, np.eye(4), atol=1e-9):
+            return self.tetmesh, self.fiber
+        nodes = self.tetmesh.nodes @ delta[:3, :3].T + delta[:3, 3]
+        fiber = self.fiber
+        if fiber is not None:
+            fiber = fiber.copy()
+            # Directions rotate, arclength and side do not - one is a length
+            # along the curve and the other a normalised offset, and neither
+            # cares where the body is standing.
+            fiber[:, :3] = fiber[:, :3] @ delta[:3, :3].T
+        return TetMesh(nodes, self.tetmesh.tets), fiber
+
     def _build_solver(self) -> None:
         self._compute_inv_mass()
         self._compute_region()
+        self.sim_world, delta = self._sample_frame()
+        mesh, fiber = self._rebased(delta)
         attach_targets = None
         attach_stiffness = 0.0
         if self.attach_active:
@@ -289,10 +350,12 @@ class MarrowSession:
             if obj is None:
                 raise ValueError(f"object {self.object_name!r} no longer exists")
             self.attach_idx, self.attach_w = ensure_weights(obj, self.tetmesh)
-            attach_targets = sample_targets(obj, self.attach_idx, self.attach_w)
+            attach_targets = sample_targets(
+                obj, self.attach_idx, self.attach_w, self.sim_world
+            )
             attach_stiffness = self.attach_stiffness
         self.solver = GPUSolver(
-            self.tetmesh,
+            mesh,
             self.inv_mass,
             self.params,
             ground_z=self.ground_z,
@@ -306,7 +369,7 @@ class MarrowSession:
             attach_stiffness=attach_stiffness,
             attach_targets=attach_targets,
             pin_kinematic=self.pin_kinematic,
-            fiber=self.fiber,
+            fiber=fiber,
             region=self.region,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
@@ -326,7 +389,9 @@ class MarrowSession:
         obj = bpy.data.objects.get(self.object_name)
         if obj is None:
             return
-        self.solver.set_targets(sample_targets(obj, self.attach_idx, self.attach_w))
+        self.solver.set_targets(
+            sample_targets(obj, self.attach_idx, self.attach_w, self.sim_world)
+        )
 
     def refresh_from_object(self) -> None:
         """Re-read the panel settings so a restart picks up edited sliders.
@@ -458,8 +523,17 @@ class MarrowSession:
         if positions is None:
             return False
 
-        # skin() works in world space; mesh vertices are object space.
-        world_to_local = np.array(obj.matrix_world.inverted())
+        # skin() works in the solver frame; mesh vertices are object space.
+        #
+        # Divided by the frame the solver was BUILT in, not the object
+        # current one. Those are the same matrix until someone moves the
+        # object mid-playback, and then this is what decides what that looks
+        # like: dividing by the live transform would draw the body sliding
+        # the opposite way, because the simulation has not moved. Dividing by
+        # the build frame carries the simulation along rigidly instead, the
+        # way moving any other object behaves, and the next restart rebases
+        # it properly.
+        world_to_local = np.linalg.inv(self.sim_world)
         local = positions @ world_to_local[:3, :3].T + world_to_local[:3, 3]
 
         obj.data.vertices.foreach_set("co", local.ravel().astype(np.float64))
