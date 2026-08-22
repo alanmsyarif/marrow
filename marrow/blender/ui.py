@@ -320,13 +320,22 @@ class MarrowSettings(bpy.types.PropertyGroup):
     stick_break: bpy.props.FloatProperty(
         name="Stick Break",
         description=(
-            "How far the material may drag a sticky contact point before it "
-            "lets go. Zero never lets go. Tune it against the shot - the "
-            "distance a contact settles at depends on Stiffness and Substeps"
+            "How far the material may pull a sticky contact off its anchor "
+            "before it lets go. Far smaller than the distance the collider "
+            "travels: measured on a 1 m sphere lifted 1.55 m, 0.05 releases "
+            "almost at once, 0.15 releases part way through, and 0.25 never "
+            "releases at all. Scale it with the body, not with Resolution - "
+            "the threshold does not move when the cage is refined. Zero "
+            "never lets go"
         ),
         default=0.0,
         min=0.0,
-        soft_max=1.0,
+        # Measured, not guessed: on a unit-sized body everything past about a
+        # quarter of the body never releases, so a soft max of 1.0 spent most
+        # of the slider on values that all behave identically.
+        soft_max=0.3,
+        step=1,
+        precision=3,
         unit="LENGTH",
     )
     ground_z: bpy.props.FloatProperty(

@@ -108,3 +108,42 @@ def test_nothing_sticks_before_contact():
         f"untouched control "
         f"{float(np.abs(plated.positions() - free.positions()).max()):.3e}"
     )
+
+
+def test_a_large_break_distance_never_releases():
+    """The far end of the range, which the panel now stops at.
+
+    Everything past roughly a quarter of the body behaves exactly like zero:
+    the contact is never pulled far enough off its anchor to trip. The slider
+    used to run to 1.0, so most of its travel was this - values that all do
+    nothing, next to a working range squeezed into the first fifth.
+    """
+    never = _solver([_plate(0.6)], stick_break=0.5)
+    off = _solver([_plate(0.6)], stick_break=0.0)
+    for s in (never, off):
+        s.step()
+        for lift in (0.8, 1.0, 1.2, 1.4):
+            s.colliders = [_plate(lift)]
+            s.step()
+    assert abs(_top_z(never) - _top_z(off)) < 1e-3, (
+        f"0.5 should behave like never letting go: {_top_z(never):.3f} "
+        f"against {_top_z(off):.3f}"
+    )
+
+
+def test_a_realistic_break_distance_releases_a_straight_pull():
+    """The README used to say a straight pull barely moves the contact, so
+    Stick Break could not end one and only Tearing would do. It can: this is
+    a plain vertical lift, and a value inside the working range drops the
+    body off it."""
+    breaks = _solver([_plate(0.6)], stick_break=0.1)
+    off = _solver([_plate(0.6)], stick_break=0.0)
+    for s in (breaks, off):
+        s.step()
+        for lift in (0.8, 1.0, 1.2, 1.4):
+            s.colliders = [_plate(lift)]
+            s.step()
+    assert _top_z(off) > 1.35, "the control should ride the plate up"
+    assert _top_z(breaks) < 0.5, (
+        f"0.1 did not release a straight pull: top z {_top_z(breaks):.3f}"
+    )

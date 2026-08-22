@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.0.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.0.1.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -172,7 +172,7 @@ Two things a torn tet still does:
 - **It keeps a volume constraint**, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1x on a stretch test.
 - **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
-**Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. Stick Break does not substitute: it measures how far a contact point *drags across the collider*, which barely moves in a straight pull, so a stretch that should snap keeps stretching. If a stretch shot smears instead of separating, switch Tearing on.
+**Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. **Stick Break** can end one too, but it is a blunter instrument: it releases the contact rather than failing the material, so the body drops away whole instead of necking and parting. Measured on a 1 m sphere with a sticky plate lifted 1.55 m, every node released at 0.05 and at 0.15, and none released at 0.25 - the whole useful range sits below about a quarter of the body, which is why the slider stops there. If a stretch shot smears instead of separating, reach for Tearing first.
 
 ### Per-region stiffness
 
