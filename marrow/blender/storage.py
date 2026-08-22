@@ -35,6 +35,11 @@ _LEGACY_FIBER = "marrow_fiber"
 BIND_IDX = "marrow_bind_idx"
 BIND_W = ("marrow_bind_w0", "marrow_bind_w1", "marrow_bind_w2", "marrow_bind_w3")
 REST_KEY = "marrow_rest"
+# Per render vertex, 1.0 where the tet holding it has failed. Written only
+# while Failure is on. This is what lets the mesh actually come apart:
+# Marrow will not change your topology, but Geometry Nodes will, and it needs
+# something to select on.
+TORN_ATTR = "marrow_torn"
 # Cage-node attachment weights, stored on the CAGE mesh: k nearest render
 # vertex indices and their weights per node. The "2" generation was
 # synthesized in object space; generation 1 measured world-space vertices
@@ -177,7 +182,7 @@ def restore_rest(mesh) -> bool:
 def clear_marrow_data(mesh) -> None:
     """Remove every attribute Marrow wrote. Tolerates any being absent."""
     for name in (
-        (REST_KEY, BIND_IDX)
+        (REST_KEY, TORN_ATTR, BIND_IDX)
         + BIND_W
         + _attach_idx_names()
         + ATTACH_W

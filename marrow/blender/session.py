@@ -119,6 +119,11 @@ class MarrowSession:
         # these on the CPU, so a mode switched on after a bake still colours
         # every cached frame.
         self._cache_nodes: dict[int, np.ndarray] = {}
+        # The frame each tet failed on, or a sentinel for one still intact.
+        # Failure is one-way, so one array covers every frame - caching a
+        # flag per tet per frame would be 118k floats a frame on a real cage,
+        # and this is 118k floats total.
+        self._torn_frame: np.ndarray = None
         self._freed = False
 
         cage_obj = _cage_of(obj)
@@ -510,12 +515,51 @@ class MarrowSession:
             )
         self._cache[frame] = positions.astype(np.float32)
         self._cache_nodes[frame] = self.solver.positions().astype(np.float32)
+        self._record_failures(frame)
         self._last_simulated = frame
         return self._cache[frame]
+
+    def _record_failures(self, frame: int) -> None:
+        """Note which tets have failed by this frame.
+
+        Only while Failure is on: the readback is an R32F image the size of
+        the cage, and paying for it on a body that can never fail would be a
+        per-frame PCIe cost for an array of zeros.
+        """
+        if self.tear_threshold <= 0.0:
+            return
+        torn = self.solver.torn_flags() > 0.0
+        if self._torn_frame is None:
+            self._torn_frame = np.full(torn.shape[0], np.inf, dtype=np.float64)
+        fresh = torn & ~np.isfinite(self._torn_frame)
+        self._torn_frame[fresh] = float(frame)
+
+    def _write_torn(self, obj, frame: int) -> None:
+        """Stamp the per-vertex failure flag for this frame.
+
+        Read from the recorded failure frames rather than from the GPU, so
+        scrubbing a baked cache shows what had failed by then instead of what
+        has failed by the end.
+        """
+        from .storage import TORN_ATTR
+
+        if self._torn_frame is None:
+            return
+        per_tet = (self._torn_frame <= float(frame)).astype(np.float32)
+        values = per_tet[np.asarray(self.bind_idx, dtype=np.int64)]
+        mesh = obj.data
+        attr = mesh.attributes.get(TORN_ATTR)
+        if attr is None or attr.data_type != "FLOAT" or attr.domain != "POINT":
+            if attr is not None:
+                mesh.attributes.remove(attr)
+            attr = mesh.attributes.new(name=TORN_ATTR, type="FLOAT", domain="POINT")
+        attr.data.foreach_set("value", values)
+        mesh.update()
 
     def _clear_cache(self) -> None:
         self._cache.clear()
         self._cache_nodes.clear()
+        self._torn_frame = None
 
     def ensure_frame(self, frame: int, frame_start: int):
         """Positions for ``frame``, simulating forward when live.
@@ -563,6 +607,7 @@ class MarrowSession:
         obj.data.vertices.foreach_set("co", local.ravel().astype(np.float64))
         obj.data.update()
         self._write_false_color(obj, int(frame))
+        self._write_torn(obj, int(frame))
         return True
 
     def _write_false_color(self, obj, frame: int) -> None:

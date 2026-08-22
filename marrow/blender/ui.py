@@ -193,15 +193,20 @@ class MarrowSettings(bpy.types.PropertyGroup):
         default=False,
     )
     tearing_enabled: bpy.props.BoolProperty(
-        name="Tearing",
+        name="Failure",
         description=(
-            "Let over-stretched material fail permanently. Torn tets stop "
-            "resisting, so the body goes slack and pulls apart"
+            "Let over-stretched material give way. A failed tet stops "
+            "resisting for good, so a hanging body lets go instead of "
+            "necking forever - measured, a pinned bar reached 12 times "
+            "further with this on. It does NOT split the mesh: Marrow never "
+            "changes your topology, so the two halves stay joined by a very "
+            "thin filament. The marrow_torn vertex attribute marks the "
+            "failed material so Geometry Nodes can delete it"
         ),
         default=False,
     )
     tear_threshold: bpy.props.FloatProperty(
-        name="Tear Strain",
+        name="Fail Strain",
         description=(
             "Largest stretch ratio material survives. 1.5 means a tet fails "
             "once anything in it is pulled to 1.5x its rest length, in any "
@@ -623,7 +628,7 @@ class MARROW_PT_ground(_MarrowSub, bpy.types.Panel):
 
 
 class MARROW_PT_tearing(_MarrowSub, bpy.types.Panel):
-    bl_label = "Tearing"
+    bl_label = "Failure"
     bl_idname = "MARROW_PT_tearing"
     bl_order = 2
 

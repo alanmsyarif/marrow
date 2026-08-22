@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.3.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.4.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -100,7 +100,7 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Noise** | Irregularity, 0..1. Jitters when each crest arrives and how hard it bites. 0 is the exact clockwork wave. |
 | **Friction** | Resistance to sliding, for the ground plane, self-collision and body-to-body contact. 0 slides freely. Colliders carry their own value instead. See [Friction](#friction). |
 | **Ground Plane** / **Ground Height** | An infinite horizontal plane the body cannot fall through. |
-| **Tearing** / **Tear Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. |
+| **Failure** / **Fail Strain** | Largest stretch a tet survives, in any direction. 1.5 fails at 1.5x rest length. See [Failure](#failure). |
 | **Self Collision** | Stop the body passing through itself where it folds. |
 | **Collide With Bodies** | Collide with other Marrow objects that also have it on. Both deform. |
 | **Thickness** | Contact gap for both of the above, as a multiple of Resolution. |
@@ -161,20 +161,26 @@ Plain non-penetration can only push, so a collider that lifts away leaves the bo
 
 > **Do not start a body already overlapping a sticky collider.** Every buried node is grabbed on the first frame and welded to whichever face happened to be nearest. They scatter across different faces and turn the body inside out. Measured on a sphere half-buried in a sticky box: 219 of 461 nodes seized immediately, 12% of tets inverted, render mesh shredded. Move the collider clear at the start frame, or leave Sticky off. A collider that presses in *during* the simulation is fine, and is the intended way to set a stretch shot up.
 
-### Tearing
+### Failure
 
-Tearing is **constraint failure**, not fracture. A tetrahedron past the strain threshold stops resisting distortion, permanently, so the material necks, stretches and pulls apart. It does **not** split into separate pieces with a visible gap: the render mesh is never modified, which is what keeps your UVs, shape keys and material slots intact.
+This was called Tearing, and the name promised something it can never do. A tetrahedron past the strain threshold stops resisting distortion, permanently, so the material gives way and lets go. It does **not** split the mesh. Marrow never modifies your topology - that is what keeps your UVs, shape keys and material slots intact - so however much of the cage fails, the render mesh stays one connected piece.
 
-**Tear Strain is the largest principal stretch a tet survives**, so it reads the same in every direction: 1.5 means failure once anything is pulled to 1.5x its rest length, whether that is a pull along one axis, a uniform swell or a shear. Rotation is not strain and never tears.
+**What it does buy is release.** Measured on a 2 m bar pinned at the top under heavy gravity, over 40 frames: with Failure off the bar necks and holds, its free end reaching -5.11. With Failure on at Fail Strain 1.4 the neck gives and the rest drops to **-64.37**, twelve times further. Nothing else in the solver ever lets material go.
 
-One consequence worth knowing: a volume-preserving squash stretches the material sideways, and that counts. Press a blob to a quarter of its height and it has stretched 2x laterally, which fails a 1.5 threshold. If a heavy press is tearing material you wanted intact, raise Tear Strain or switch Tearing off for that shot.
+**What it does not buy is a break, or permanent damage.** The fallen part is still joined to the pinned part by a filament stretched sixty units and far thinner than a pixel. And failure is not plasticity: stretched to 4.5x and released, a body with 80% of its tets failed sprang back keeping 2.9% of the stretch, against 3.0% for a body with none. Failed material goes slack; it does not stay deformed.
 
-Two things a torn tet still does:
+**The `marrow_torn` attribute is how you actually break it.** While Failure is on, every render vertex carries a FLOAT attribute, 1.0 where the tet holding it has failed by this frame. Feed it to a Geometry Nodes Delete Geometry and the failed material disappears, leaving a real gap - Marrow supplies the selection and you own the topology change. It is written from the recorded failure frames rather than read live, so scrubbing a baked cache shows what had failed by that frame instead of what fails by the end.
+
+**Fail Strain is the largest principal stretch a tet survives**, so it reads the same in every direction: 1.5 means failure once anything is pulled to 1.5x its rest length, whether that is a pull along one axis, a uniform swell or a shear. Rotation is not strain and never fails.
+
+One consequence worth knowing: a volume-preserving squash stretches the material sideways, and that counts. Press a blob to a quarter of its height and it has stretched 2x laterally, which fails a 1.5 threshold. If a heavy press is failing material you wanted intact, raise Fail Strain or switch Failure off for that shot.
+
+Two things a failed tet still does:
 
 - **It keeps a volume constraint**, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1x on a stretch test.
 - **It cannot be the last tet holding a node.** A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.
 
-**Tearing is what ends a sticky stretch.** With it off, material held by a sticky collider that pulls away necks without limit into one unbroken spike, because nothing in the solver can ever fail. **Stick Break** can end one too, but it is a blunter instrument: it releases the contact rather than failing the material, so the body drops away whole instead of necking and parting. Measured on a 1 m sphere with a sticky plate lifted 1.55 m, every node released at 0.05 and at 0.15, and none released at 0.25 - the whole useful range sits below about a quarter of the body, which is why the slider stops there. If a stretch shot smears instead of separating, reach for Tearing first.
+**Ending a sticky stretch.** Material held by a sticky collider that pulls away necks without limit, because nothing else in the solver can fail. **Stick Break** ends it by releasing the contact, so the body drops away whole rather than necking and parting: measured on a 1 m sphere with a sticky plate lifted 1.55 m, every node released at 0.05 and at 0.15, and none released at 0.25 - the useful range sits below about a quarter of the body, which is why the slider stops there. **Failure** ends it by giving way in the material instead, which is the one that leaves a neck. Neither produces a gap on its own; that is what `marrow_torn` and a Delete Geometry node are for.
 
 ### Per-region stiffness
 
