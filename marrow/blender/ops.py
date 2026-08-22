@@ -4,6 +4,7 @@ import time
 
 import bpy
 import numpy as np
+from mathutils import Vector
 
 from ..blender import false_color, group, handlers
 from ..blender.curve import polyline_from_curve
@@ -466,6 +467,47 @@ def session_for(obj) -> MarrowSession:
     )
 
 
+FIELD_KINDS = {"FORCE": 1, "WIND": 2, "VORTEX": 3}
+
+
+def field_specs_of(obj):
+    """One row per supported force field in ``obj``'s field collection.
+
+    Rows are (kind, origin xyz, axis xyz, strength, power, max_dist), all in
+    world space, which is the layout gpu.solver.pack_fields writes and
+    PREDICT_SRC reads.
+
+    Blender exposes no way to ask it for the combined field at a point, so
+    the three field types with a closed form worth having are reimplemented:
+    Force pulls along the radius, Wind blows along the field object local
+    +Z, Vortex turns around that same axis. Anything else in the collection
+    is skipped rather than silently approximated by the wrong one.
+    """
+    collection = obj.marrow.field_collection
+    if collection is None:
+        return []
+    rows = []
+    for ob in collection.all_objects:
+        if ob is obj:
+            continue
+        field = getattr(ob, "field", None)
+        if field is None or field.type not in FIELD_KINDS:
+            continue
+        if field.strength == 0.0:
+            continue
+        world = ob.matrix_world
+        axis = (world.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+        rows.append((
+            float(FIELD_KINDS[field.type]),
+            *(float(c) for c in world.translation),
+            *(float(c) for c in axis),
+            float(field.strength),
+            float(field.falloff_power),
+            float(field.distance_max) if field.use_max_distance else 0.0,
+        ))
+    return rows
+
+
 def _params_from(settings) -> SolverParams:
     """Map the panel sliders onto the solver's parameters.
 
@@ -489,7 +531,22 @@ def _params_from(settings) -> SolverParams:
         waveform=0 if settings.waveform == "SMOOTH" else 1,
         wave_noise=float(settings.wave_noise),
         fiber_bend=float(settings.fiber_bend),
+        # Blender already has a gravity setting per scene, and every other
+        # physics system in it obeys that one. Marrow used to ignore it and
+        # hardcode -9.81, so turning gravity off did nothing here. The
+        # per-body scale rides on top, for a body that should float or fall
+        # harder than the rest of the shot.
+        gravity=_scene_gravity(settings),
     )
+
+
+def _scene_gravity(settings):
+    """The scene gravity, scaled by this body's own multiplier."""
+    scene = bpy.context.scene
+    if scene is None or not scene.use_gravity:
+        return (0.0, 0.0, 0.0)
+    scale = float(getattr(settings, "gravity_scale", 1.0))
+    return tuple(float(c) * scale for c in scene.gravity)
 
 
 def _bake_iter(context, obj):

@@ -81,7 +81,7 @@ class GPUSolver:
                  colliders=None, tear_threshold=0.0, stick_break=0.0,
                  self_distance=0.0, body_distance=0.0, friction=0.0,
                  attach_stiffness=0.0, attach_targets=None,
-                 pin_kinematic=False, fiber=None, region=None):
+                 pin_kinematic=False, fiber=None, region=None, fields=None):
         self.mesh = mesh
         self.params = params
         self.ground_z = float(ground_z)
@@ -192,6 +192,12 @@ class GPUSolver:
             region_rows = region_rows[self._tet_order]
         self.tex_region = upload_verified(pack_scalar(region_rows), fmt="R32F")
 
+        # Force fields. Always allocated so predict can bind it
+        # unconditionally; n_fields 0 makes the loop body dead.
+        self.n_fields = 0
+        self.tex_fields = blank(3)
+        self.set_fields(fields)
+
         # Seconds of simulated time, for the fiber wave. Per substep, not
         # per frame - a per-frame clock steps the wave in visible stairs at
         # low substep counts. Reset by a live restart, which rebuilds this
@@ -283,11 +289,7 @@ class GPUSolver:
 
         self.sh_predict = kernels.build(
             "predict", kernels.PREDICT_SRC,
-            [("RGBA32F", "FLOAT_2D", "x", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
-             ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
-             ("R32F", "FLOAT_2D", "mark", {"WRITE"})],
-            [("FLOAT", "h"), ("VEC3", "gravity"), ("INT", "n_nodes")],
+            kernels.PREDICT_IMAGES, kernels.PREDICT_PUSH,
         )
         self.sh_solve = kernels.build(
             "solve", kernels.SOLVE_SRC,
@@ -403,9 +405,11 @@ class GPUSolver:
         self.sh_predict.image("v", self.tex_v)
         self.sh_predict.image("p", self.tex_p)
         self.sh_predict.image("mark", self.tex_mark)
+        self.sh_predict.image("fields", self.tex_fields)
         self.sh_predict.uniform_float("h", h)
         self.sh_predict.uniform_float("gravity", tuple(self.params.gravity))
         self.sh_predict.uniform_int("n_nodes", self.n_nodes)
+        self.sh_predict.uniform_int("n_fields", self.n_fields)
         gpu.compute.dispatch(self.sh_predict, node_groups, 1, 1)
 
         for c in range(len(self.offsets) - 1):
@@ -486,6 +490,20 @@ class GPUSolver:
         self.sh_attach.uniform_int("kinematic", 1 if self.pin_kinematic else 0)
         self.sh_attach.uniform_int("drive_free", 1 if self.drive_free else 0)
         gpu.compute.dispatch(self.sh_attach, node_groups, 1, 1)
+
+    def set_fields(self, fields) -> None:
+        """Replace the force fields. Once per frame, like the targets and the
+        collider transforms - a field that animates moves between frames, not
+        between substeps.
+
+        Three texels a field, so this upload is a few pixels however big the
+        cage is. That is the whole reason the fields ride a texture the
+        kernel reads rather than an acceleration baked onto every node: the
+        cost does not scale with the body.
+        """
+        rows = [] if fields is None else list(fields)
+        self.n_fields = len(rows)
+        self.tex_fields = upload_verified(pack_fields(rows))
 
     def set_targets(self, targets) -> None:
         """Replace the animation targets. Called once per frame, not per substep:
@@ -740,3 +758,27 @@ class GPUSolver:
             f"Marrow: the skin texture never reported its generation mark "
             f"after 8 re-dispatches. The GPU queue appears wedged."
         )
+
+
+def pack_fields(fields) -> np.ndarray:
+    """Three texels per field: origin+kind, axis+strength, then the falloff.
+
+    Free function rather than a method because the parity test builds one
+    without a solver, and because it is the only place the texel layout is
+    written down - the GLSL reader in PREDICT_SRC is the other half.
+    """
+    rows = np.asarray(fields, dtype=np.float64) if fields is not None else np.zeros((0, 10))
+    if rows.size == 0:
+        return np.zeros((1, 3, 4), dtype=np.float32)
+    n = rows.shape[0]
+    values = np.zeros((3 * n, 4), dtype=np.float64)
+    values[0::3, :3] = rows[:, 1:4]      # origin
+    values[0::3, 3] = rows[:, 0]         # kind
+    values[1::3, :3] = rows[:, 4:7]      # axis
+    values[1::3, 3] = rows[:, 7]         # strength
+    values[2::3, 0] = rows[:, 8]         # falloff power
+    values[2::3, 1] = rows[:, 9]         # max distance, 0 for unlimited
+    width, height = texture_shape(3 * n)
+    image = np.zeros((height, width, 4), dtype=np.float32)
+    image.reshape(-1, 4)[: 3 * n] = values.astype(np.float32)
+    return image

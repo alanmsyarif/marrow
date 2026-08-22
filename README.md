@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.1.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.2.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -87,6 +87,8 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | **Stiffness Group** | Vertex group saying where the body is stiff. Scales both sliders above, per tet. See [Per-region stiffness](#per-region-stiffness). |
 | **Softest** | Stiffness multiplier where that group's weight is 0. |
 | **Damping** | Velocity retained each substep. 1.0 is undamped. |
+| **Gravity** | Multiplies the scene gravity for this body alone. 0 is weightless, negative falls upwards. |
+| **Force Fields** | Collection of Force, Wind and Vortex fields that push this body. See [Force fields](#force-fields). |
 | **Fiber** | Contract along baked fiber directions. See [Fiber](#fiber). |
 | **Curve** | Curve running along the body. Its tangent is the fiber direction, its arclength the wave phase. |
 | **Fiber Stiffness** | Resistance to stretch along the fiber, and how hard it pulls. |
@@ -348,6 +350,16 @@ Use a stiffness above 0 only when you want the *whole* body to follow the animat
 Leave Follows Animation **off** to nail a region in world space while an armature drives the rest - a foot planted on the floor while the body moves over it. That is the case the flag exists to preserve.
 
 One more reason to turn Attachment on here: modifiers are only muted in the display while Attachment is on. With a pin alone, a Hook or Armature stays shown, so Marrow writes the simulation into the mesh and the modifier then bends that result a second time. The stretched spike this produces is display only - the simulation underneath is unharmed.
+
+### Force fields
+
+**Gravity comes from the scene.** Marrow used to hardcode -9.81 and ignore Scene Properties, so turning gravity off in the place every other Blender physics system reads it did nothing here. It now obeys both the direction and the switch, and the per-body **Gravity** multiplier rides on top: 0 makes one body weightless while the rest of the shot still falls, and a negative value falls upwards.
+
+**Force Fields** takes a collection, the same way Colliders does. Every **Force**, **Wind** and **Vortex** object in it pushes the body, nested collections included, and their strength, falloff power and max distance are read from the field settings on each object rather than duplicated into the Marrow panel. Force pushes along the radius from the field object, Wind blows along its local +Z, and Vortex turns around that same axis. The panel reports how many objects in the collection actually drive the body, so a collection of the wrong field type says so instead of doing nothing quietly.
+
+Other field types are ignored. Blender exposes no way to ask it for the combined field at a point, so these three are reimplemented against their documented falloff; Turbulence and the rest have no closed form worth approximating, and guessing at one would be worse than skipping it.
+
+Fields are evaluated in the kernel, where the node actually is, from a texture holding three texels per field. An animated field costs one upload of a few pixels per frame however large the cage is - the cost does not scale with the body.
 
 ### Ground plane
 

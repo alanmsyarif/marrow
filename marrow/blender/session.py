@@ -47,6 +47,12 @@ class MarrowSession:
         self.ground_z = float(ground_z)
         self.ground_on = bool(ground_on)
         self.collider_objects = list(collider_objects or [])
+        # Read from the object rather than passed in: the bake path builds
+        # a session with explicit params, so refresh_from_object returns
+        # early and would never fill these.
+        from .ops import field_specs_of
+
+        self.field_specs = field_specs_of(obj)
         self.tear_threshold = float(tear_threshold)
         self.stick_break = float(stick_break)
         self.self_distance = float(self_distance)
@@ -371,6 +377,7 @@ class MarrowSession:
             pin_kinematic=self.pin_kinematic,
             fiber=fiber,
             region=self.region,
+            fields=self.field_specs,
         )
         self.solver.attach_render(self.bind_idx, self.bind_w)
 
@@ -393,6 +400,22 @@ class MarrowSession:
             sample_targets(obj, self.attach_idx, self.attach_w, self.sim_world)
         )
 
+    def _refresh_fields(self) -> None:
+        """Resample the force fields, so an animated one moves with the shot.
+
+        Separate from _refresh_targets because it has no attachment to
+        depend on: a body with no armature still wants its wind.
+        """
+        import bpy
+
+        from .ops import field_specs_of
+
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None or self.solver is None:
+            return
+        self.field_specs = field_specs_of(obj)
+        self.solver.set_fields(self.field_specs)
+
     def refresh_from_object(self) -> None:
         """Re-read the panel settings so a restart picks up edited sliders.
 
@@ -408,7 +431,7 @@ class MarrowSession:
             return
         settings = obj.marrow
 
-        from .ops import _params_from, collider_objects_of
+        from .ops import _params_from, collider_objects_of, field_specs_of
 
         # The bake path builds its params through _params_from directly, so
         # reading the sliders a second time here would be a copy to keep in
@@ -437,6 +460,7 @@ class MarrowSession:
         self.self_distance = thickness if settings.self_collision else 0.0
         self.body_distance = thickness if settings.body_collision else 0.0
         self.collider_objects = collider_objects_of(obj)
+        self.field_specs = field_specs_of(obj)
 
     def _check_live(self) -> None:
         if self._freed:

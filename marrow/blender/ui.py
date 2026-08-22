@@ -306,6 +306,29 @@ class MarrowSettings(bpy.types.PropertyGroup):
         min=0.1,
         soft_max=3.0,
     )
+    gravity_scale: bpy.props.FloatProperty(
+        name="Gravity",
+        description=(
+            "Multiplies the scene gravity for this body alone. The direction "
+            "and strength come from Scene Properties, the same place every "
+            "other Blender physics system reads them, so turning gravity off "
+            "there turns it off here. 0 makes this body weightless, negative "
+            "makes it fall upwards"
+        ),
+        default=1.0,
+        soft_min=-2.0,
+        soft_max=2.0,
+    )
+    field_collection: bpy.props.PointerProperty(
+        name="Force Fields",
+        description=(
+            "Every Force, Wind and Vortex field in this collection pushes "
+            "the body, nested collections included. Their own strength, "
+            "falloff and max distance are read from the field settings on "
+            "each object. Other field types are ignored"
+        ),
+        type=bpy.types.Collection,
+    )
     collider_collection: bpy.props.PointerProperty(
         name="Colliders",
         description=(
@@ -578,6 +601,7 @@ class MARROW_PT_simulation(_MarrowSub, bpy.types.Panel):
         row.enabled = bool(settings.region_group)
         row.prop(settings, "region_softest")
         layout.prop(settings, "damping")
+        layout.prop(settings, "gravity_scale")
         # A material property of the body, so it sits with stiffness and
         # damping rather than in any one contact panel - it is the value the
         # ground, self-collision and body-to-body all read.
@@ -742,10 +766,41 @@ class MARROW_PT_colliders(_MarrowSub, bpy.types.Panel):
         row.prop(settings, "stick_break")
 
 
+class MARROW_PT_fields(_MarrowSub, bpy.types.Panel):
+    # Below Colliders because it is the other collection of scene objects the
+    # body reads, and above Display because it is still simulation.
+    bl_label = "Force Fields"
+    bl_idname = "MARROW_PT_fields"
+    bl_order = 8
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.active_object.marrow
+        layout.prop(settings, "field_collection", text="")
+        if settings.field_collection is None:
+            layout.label(
+                text="Point at a collection of force fields", icon="INFO"
+            )
+            return
+        # Strength, falloff and range live on the field object itself, in
+        # Blender own Physics tab - duplicating them here would be a second
+        # copy to keep in step with no way to tell which one won.
+        supported = [
+            ob for ob in settings.field_collection.all_objects
+            if getattr(ob, "field", None) is not None
+            and ob.field.type in {"FORCE", "WIND", "VORTEX"}
+        ]
+        total = len(settings.field_collection.all_objects)
+        layout.label(
+            text=f"{len(supported)} of {total} objects drive this body",
+            icon="FORCE_FORCE",
+        )
+
+
 class MARROW_PT_display(_MarrowSub, bpy.types.Panel):
     bl_label = "Display"
     bl_idname = "MARROW_PT_display"
-    bl_order = 8
+    bl_order = 9
 
     def draw(self, context):
         self.layout.prop(context.active_object.marrow, "false_color")
@@ -764,5 +819,6 @@ PANEL_CLASSES = (
     MARROW_PT_fiber,
     MARROW_PT_contact,
     MARROW_PT_colliders,
+    MARROW_PT_fields,
     MARROW_PT_display,
 )

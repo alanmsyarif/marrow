@@ -75,6 +75,43 @@ def build(name, source, images, push_constants, group_size: int = 64):
 
 
 PREDICT_SRC = """
+// Blender force fields, evaluated where the node actually is rather than
+// sampled onto it from the CPU. Three texels per field, so the whole set is
+// a handful of pixels and a moving field costs one tiny upload a frame
+// instead of one the size of the cage.
+//
+// Transcribed from solver_ref.field_accel. The two must stay in step -
+// test_fields_vs_oracle is what notices if they do not.
+vec3 field_accel(vec3 pos)
+{
+  vec3 a = vec3(0.0);
+  for (int f = 0; f < n_fields; ++f) {
+    vec4 o = imageLoad(fields, texel(3 * f));
+    vec4 d = imageLoad(fields, texel(3 * f + 1));
+    vec4 e = imageLoad(fields, texel(3 * f + 2));
+    int kind = int(o.w);
+    float strength = d.w;
+    float power = e.x;
+    float max_dist = e.y;
+
+    vec3 rel = pos - o.xyz;
+    float r = length(rel);
+    if (max_dist > 0.0 && r > max_dist) { continue; }
+    float falloff = (power != 0.0) ? pow(max(r, 1e-4), -power) : 1.0;
+
+    if (kind == 1) {                       // Force: along the radius
+      if (r > 1e-6) { a += strength * falloff * (rel / r); }
+    } else if (kind == 2) {                // Wind: along the field axis
+      a += strength * falloff * d.xyz;
+    } else if (kind == 3) {                // Vortex: around the field axis
+      vec3 t = cross(d.xyz, rel);
+      float tl = length(t);
+      if (tl > 1e-6) { a += strength * falloff * (t / tl); }
+    }
+  }
+  return a;
+}
+
 void main()
 {
   int i = int(gl_GlobalInvocationID.x);
@@ -87,7 +124,7 @@ void main()
 
   vec3 pos = xi.xyz;
   if (w > 0.0) {
-    pos += vi.xyz * h + gravity * (h * h);
+    pos += vi.xyz * h + (gravity + field_accel(xi.xyz)) * (h * h);
   }
   imageStore(p, c, vec4(pos, w));
   // Contact marks from the previous substep are stale; the contact passes
@@ -95,6 +132,21 @@ void main()
   imageStore(mark, c, vec4(0.0));
 }
 """
+
+PREDICT_IMAGES = [
+    ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
+    ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
+    ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
+    ("R32F", "FLOAT_2D", "mark", {"WRITE"}),
+    ("RGBA32F", "FLOAT_2D", "fields", {"READ"}),
+]
+PREDICT_PUSH = [
+    ("FLOAT", "h"),
+    ("VEC3", "gravity"),
+    ("INT", "n_nodes"),
+    ("INT", "n_fields"),
+]
+
 
 SOLVE_SRC = """
 // Stable neo-Hookean, one deviatoric and one hydrostatic constraint per tet,

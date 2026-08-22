@@ -63,6 +63,53 @@ def make_state(nodes: np.ndarray, density: float = 1.0, pinned=None) -> SolverSt
     )
 
 
+# Field kinds, matching Blender's own names. Mirrored in PREDICT_SRC as
+# plain integers, because a GLSL kernel cannot read an enum.
+FIELD_FORCE = 1
+FIELD_WIND = 2
+FIELD_VORTEX = 3
+
+
+def field_accel(points: np.ndarray, fields) -> np.ndarray:
+    """Acceleration each field contributes at every point, summed. (N, 3).
+
+    Mirrored exactly in kernels.PREDICT_SRC - test_fields_vs_oracle is what
+    notices if the two drift.
+
+    A field row is (kind, origin xyz, axis xyz, strength, power, max_dist).
+    The axis is the field object local +Z in world space, which is what
+    Blender points a Wind or a Vortex along.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    out = np.zeros_like(points)
+    if fields is None:
+        return out
+    for row in fields:
+        kind = int(row[0])
+        origin = np.asarray(row[1:4], dtype=np.float64)
+        axis = np.asarray(row[4:7], dtype=np.float64)
+        strength, power, max_dist = float(row[7]), float(row[8]), float(row[9])
+
+        rel = points - origin
+        r = np.linalg.norm(rel, axis=1)
+        # Blender divides by distance to the power, so a power of 0 is a
+        # field that does not weaken with range at all.
+        falloff = np.power(np.maximum(r, 1e-4), -power) if power != 0.0 else np.ones_like(r)
+        live = np.ones_like(r, dtype=bool) if max_dist <= 0.0 else (r <= max_dist)
+
+        if kind == FIELD_FORCE:
+            safe = live & (r > 1e-6)
+            out[safe] += (strength * falloff[safe])[:, None] * (rel[safe] / r[safe, None])
+        elif kind == FIELD_WIND:
+            out[live] += (strength * falloff[live])[:, None] * axis
+        elif kind == FIELD_VORTEX:
+            tangent = np.cross(np.broadcast_to(axis, rel.shape), rel)
+            tl = np.linalg.norm(tangent, axis=1)
+            safe = live & (tl > 1e-6)
+            out[safe] += (strength * falloff[safe])[:, None] * (tangent[safe] / tl[safe, None])
+    return out
+
+
 def precompute(nodes: np.ndarray, tets: np.ndarray):
     """Rest shape inverse and rest volume per tet."""
     p0 = nodes[tets[:, 0]]
@@ -76,7 +123,8 @@ def precompute(nodes: np.ndarray, tets: np.ndarray):
 
 
 def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
-         targets=None, fiber=None, t0: float = 0.0, region=None) -> float:
+         targets=None, fiber=None, t0: float = 0.0, region=None,
+         fields=None) -> float:
     """Advance one frame of ``params.substeps`` XPBD substeps, in place.
 
     ``targets``, when given alongside ``params.attach > 0``, are the
@@ -104,7 +152,8 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
         # predict
         state.predicted[:] = state.nodes
         state.predicted[movable] += (
-            state.velocities[movable] * h + gravity * (h * h)
+            state.velocities[movable] * h
+            + (gravity + field_accel(state.nodes, fields)[movable]) * (h * h)
         )
 
         solve_constraints(

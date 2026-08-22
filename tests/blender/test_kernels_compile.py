@@ -1,6 +1,12 @@
 import gpu
 
-from marrow.gpu.kernels import PREDICT_SRC, TEXEL_GLSL, build
+from marrow.gpu.kernels import (
+    PREDICT_IMAGES,
+    PREDICT_PUSH,
+    PREDICT_SRC,
+    TEXEL_GLSL,
+    build,
+)
 
 gpu.init()
 
@@ -13,13 +19,8 @@ def test_predict_kernel_compiles():
     shader = build(
         "predict",
         PREDICT_SRC,
-        images=[
-            ("RGBA32F", "FLOAT_2D", "x", {"READ"}),
-            ("RGBA32F", "FLOAT_2D", "v", {"READ"}),
-            ("RGBA32F", "FLOAT_2D", "p", {"WRITE"}),
-            ("R32F", "FLOAT_2D", "mark", {"WRITE"}),
-        ],
-        push_constants=[("FLOAT", "h"), ("VEC3", "gravity"), ("INT", "n_nodes")],
+        images=PREDICT_IMAGES,
+        push_constants=PREDICT_PUSH,
     )
     assert shader is not None
 

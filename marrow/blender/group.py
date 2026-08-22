@@ -81,6 +81,7 @@ def _step_group(members, frame: int) -> None:
         # transforms, and held constant across the frame's substeps. A
         # no-op for members without the pass.
         member._refresh_targets()
+        member._refresh_fields()
         # Both sides of a contact must open to the same distance.
         member.solver.body_distance = gap
 
