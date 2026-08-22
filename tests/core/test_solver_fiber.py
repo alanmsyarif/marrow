@@ -478,3 +478,76 @@ def test_bend_scales_between_squeeze_and_undulation():
 
     assert spread(params_half) < spread(params_full)
     assert spread(params_half) > 0.0
+
+
+def _recurrence(noise, speed=1.2):
+    """How strongly the whole-body pattern repeats itself later on.
+
+    Autocorrelation of the activation field over time, ignoring lags under
+    two seconds so the wave period itself is not what gets measured. 1.0
+    means the body strikes the same pose again exactly.
+    """
+    xs = np.linspace(0.0, 9.0, 90)
+    ts = np.linspace(0.0, 40.0, 400)
+    params = SolverParams(
+        wave_amp=0.5, wave_len=1.5, wave_speed=speed, wave_noise=noise
+    )
+    field = np.array([[fiber_activation(x, t, params) for t in ts] for x in xs])
+    r = field - field.mean()
+    ac = np.array([np.sum(r[:, : len(ts) - k] * r[:, k:]) for k in range(len(ts) // 2)])
+    ac /= ac[0]
+    lags = np.arange(len(ac)) * (ts[1] - ts[0])
+    keep = lags > 2.0
+    return float(ac[keep].max())
+
+
+def test_noise_breaks_the_repetition():
+    """A travelling wave at a fixed Speed strikes the same pose every
+    1/Speed seconds however each crest is dressed, because the rhythm
+    underneath never changes. Drifting the stroke rate is what breaks that,
+    and this is the measurement that says whether it worked."""
+    quiet = _recurrence(0.0)
+    loud = _recurrence(0.7)
+    assert quiet > 0.85, f"a noiseless wave has to repeat, got {quiet:.3f}"
+    assert loud < 0.55, f"the pattern still repeats at {loud:.3f}"
+
+
+def test_more_noise_repeats_less():
+    a, b, c = _recurrence(0.35), _recurrence(0.7), _recurrence(1.0)
+    assert a > b > c, f"not monotonic: {a:.3f}, {b:.3f}, {c:.3f}"
+
+
+def test_the_stroke_rate_never_runs_backwards():
+    """The drift is scaled by wave_speed so it stays a fraction of the rate.
+    If it could exceed it, the wave would stop and reverse mid-stroke, which
+    is not a rhythm change but a glitch. The 0.4 coefficient is picked
+    against exactly this bound and this test is what holds it."""
+    t = np.linspace(0.0, 200.0, 200000)
+    for noise in (0.35, 0.7, 1.0):
+        for speed in (0.4, 1.2, 3.0):
+            phase = t * speed + noise * 0.4 * abs(speed) * wobble(t * 0.5)
+            rate = np.diff(phase) / np.diff(t)
+            assert rate.min() > 0.0, (
+                f"noise {noise} at speed {speed}: the wave reverses "
+                f"(slowest rate {rate.min():+.3f})"
+            )
+
+
+def test_a_standing_wave_has_no_rate_to_drift():
+    """The drift is scaled by wave_speed, so at Speed 0 it vanishes rather
+    than shaking a wave that is not travelling anywhere. The other noise
+    terms keep working - only the rhythm term goes quiet, because there is
+    no rhythm."""
+    params = SolverParams(
+        wave_amp=0.5, wave_len=1.5, wave_speed=0.0, wave_noise=1.0
+    )
+    ts = np.linspace(0.0, 20.0, 400)
+    values = np.array([fiber_activation(2.0, t, params) for t in ts])
+    # Still alive: the position-and-time jitter does not depend on speed.
+    assert values.std() > 1e-3, "a standing wave should still breathe"
+    # But the phase never sweeps, so it never completes a cycle.
+    lows = np.nonzero((values[1:-1] < values[:-2]) & (values[1:-1] < values[2:]))[0]
+    assert len(lows) < len(ts) // 8, (
+        f"{len(lows)} contractions from a wave with no speed - the rate "
+        f"drift is sweeping the phase on its own"
+    )

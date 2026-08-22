@@ -343,6 +343,27 @@ void main()
       float jitter = 0.0;
       float amp = wave_amp;
       if (wave_noise > 0.0) {
+        // Stroke rate. Everything else here perturbs a crest - when it
+        // arrives, how hard it bites, what shape it is - and none of it
+        // touches the rhythm underneath. A travelling wave at a fixed Speed
+        // repeats exactly every 1/Speed seconds no matter how each crest is
+        // dressed, and that is what still read as repetition: measured on a
+        // 9 m body, the whole-body pattern correlated 0.72 with itself at
+        // 3.30 s, which is four wave periods to within 1%.
+        //
+        // So the accumulated phase drifts. A function of time ALONE, not of
+        // x, so the whole body speeds up and slows down together - that is
+        // an animal changing its stroke rate, where an x-dependent term
+        // would just be more of the phase jitter below. Drops the same
+        // measurement to 0.40.
+        //
+        // Scaled by wave_speed so it is a fraction of the rate rather than
+        // an absolute one, which keeps it meaningful at any Speed and keeps
+        // the wave travelling forwards: the slowest instantaneous rate is
+        // wave_speed * (1 - wave_noise * 0.4 * 0.5 * 2.2444), and 0.4 is
+        // chosen so that stays positive even at wave_noise 1.
+        u -= wave_noise * 0.4 * abs(wave_speed) * wobble(wave_time * 0.5);
+
         jitter = wave_noise * 0.3
                * wobble(x * 1.2 + wave_time * (1.1 + 0.6 * wave_speed));
         float gain = 1.0 + wave_noise * 0.5

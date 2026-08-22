@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.10.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-1.11.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -230,6 +230,17 @@ Noise also skews the pulse itself. A cosine crest eases in and eases out at exac
 | 0.00 | 1.000 | 0.998 to 1.002 |
 | 0.35 | 1.003 | 0.741 to 1.392 |
 | 1.00 | 1.128 | 0.312 to 4.088 |
+
+Last, Noise drifts the **stroke rate**. Everything above perturbs a crest - when it arrives, how hard it bites, what shape it is - and none of it touches the rhythm underneath. A travelling wave at a fixed Speed strikes the same pose again every 1/Speed seconds however each crest is dressed, and that is what still reads as repetition. Correlating the whole body against itself later on, ignoring lags shorter than two seconds so the wave period is not what gets measured:
+
+| Noise | Repeats itself at | Slowest stroke rate at Speed 1.2 |
+| --- | --- | --- |
+| 0.00 | 0.94 | 1.200 (metronome) |
+| 0.35 | 0.70 | 1.015 |
+| 0.70 | 0.40 | 0.831 |
+| 1.00 | 0.20 | 0.672 |
+
+The drift is a function of time alone, so the whole body speeds up and slows down together - an animal changing gait, where a position-dependent term would only be more phase jitter. It scales with Speed rather than being absolute, which keeps it meaningful at any Speed and keeps the wave travelling forwards: at Noise 1.0 the instantaneous rate swings between 56% and 143% of the number you set, and never reaches zero. A standing wave at Speed 0 has no rhythm to drift, so this term goes quiet and the rest keep working.
 
 The jitter is bounded so the wave's phase always advances along the body, and the skew is bounded so a crest can never fold into two. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.
 

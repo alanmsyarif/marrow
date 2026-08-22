@@ -190,6 +190,14 @@ def fiber_activation(
     jitter = 0.0
     amp = params.wave_amp
     if params.wave_noise > 0.0:
+        # Stroke rate. Everything else here perturbs a crest and none of it
+        # touches the rhythm underneath, so the wave still repeated exactly
+        # every 1/wave_speed seconds. A function of time alone, so the whole
+        # body speeds up and slows together rather than this becoming more
+        # phase jitter. See the GLSL twin for the bound and the measurement.
+        u = u - params.wave_noise * 0.4 * abs(params.wave_speed) * wobble(
+            t * 0.5
+        )
         jitter = params.wave_noise * 0.3 * wobble(
             x * 1.2 + t * (1.1 + 0.6 * params.wave_speed)
         )
