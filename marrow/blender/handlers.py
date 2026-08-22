@@ -108,3 +108,26 @@ def free_all() -> None:
     for session in SESSIONS.values():
         session.free()
     SESSIONS.clear()
+
+
+@bpy.app.handlers.persistent
+def free_on_load(*_args):
+    """Drop every session when a file is loaded. Registered on load_pre.
+
+    SESSIONS is keyed by object NAME and lives in module scope, so it
+    outlives the file it was built for. Open a second file holding an object
+    of the same name that already has a cage, and on_frame_change finds that
+    entry and simulates the new mesh with the old file's GPU state -
+    measured, a 125-node session answering for an 8-node body. Tetrahedralize
+    pops the stale entry, so the path only bites when a body is NOT rebuilt,
+    which is exactly the case of opening a finished file and pressing play.
+
+    It leaks as well: about 25 GPU textures a session, held for the life of
+    the Blender process however many files are opened.
+
+    load_pre rather than load_post, because these sessions belong to the file
+    being closed - freeing them before the next one arrives means nothing can
+    look one up in between. Persistent, or Blender would drop this handler on
+    the first load and it would protect exactly one file.
+    """
+    free_all()

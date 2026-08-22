@@ -68,6 +68,13 @@ def register():
     # not come back with an empty collider list.
     if migrate_collider_slots not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(migrate_collider_slots)
+    # Sessions are keyed by object name and outlive the file that built them,
+    # so a load has to clear them or the next file inherits the last one's
+    # GPU state along with its textures.
+    from .blender.handlers import free_on_load
+
+    if free_on_load not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(free_on_load)
     _registered[:] = classes
 
 
@@ -85,6 +92,11 @@ def unregister():
 
     while migrate_collider_slots in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(migrate_collider_slots)
+
+    from .blender.handlers import free_on_load
+
+    while free_on_load in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(free_on_load)
 
     del bpy.types.Object.marrow_collider
     del bpy.types.Object.marrow

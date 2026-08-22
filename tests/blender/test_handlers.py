@@ -118,3 +118,97 @@ def test_missing_object_is_skipped_not_fatal():
         bpy.context.scene.frame_set(2)  # must not raise
     finally:
         handlers.unregister_handler()
+
+
+def _simulated_cube(size=2.0, frames=4):
+    bpy.ops.mesh.primitive_cube_add(size=size, location=(0, 0, 5))
+    obj = bpy.context.active_object
+    obj.name = "Cube"
+    obj.marrow.resolution = 0.5
+    obj.marrow.ground_enabled = False
+    assert bpy.ops.marrow.tetrahedralize() == {"FINISHED"}
+    scene = bpy.context.scene
+    scene.frame_start, scene.frame_end = 1, frames
+    for f in range(1, frames + 1):
+        scene.frame_set(f)
+    return obj
+
+
+def test_loading_a_file_drops_the_live_sessions():
+    """SESSIONS is keyed by object NAME and lives in module scope, so it
+    outlived the file that built it. Open a second file holding a Cube that
+    already has a cage and the frame handler found the old entry and
+    simulated the new mesh with the previous file's GPU state - measured, a
+    125-node session answering for an 8-node body. It leaked the textures
+    too, about 25 a session, for the life of the process.
+    """
+    import marrow
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    try:
+        marrow.unregister()
+    except Exception:
+        pass
+    marrow.register()
+    handlers.free_all()
+
+    _simulated_cube()
+    assert "Cube" in handlers.SESSIONS, "the shot has to be running first"
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    assert not handlers.SESSIONS, (
+        f"a load left {list(handlers.SESSIONS)} behind - the next file with "
+        f"an object of that name would inherit it"
+    )
+
+
+def test_opening_a_saved_file_drops_them_too():
+    """read_factory_settings and open_mainfile are different paths and the
+    handler has to cover both, or the one people actually use is the one
+    left unguarded."""
+    import os
+    import tempfile
+
+    import marrow
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    try:
+        marrow.unregister()
+    except Exception:
+        pass
+    marrow.register()
+    handlers.free_all()
+
+    _simulated_cube()
+    path = os.path.join(tempfile.gettempdir(), "marrow_session_guard.blend")
+    bpy.ops.wm.save_as_mainfile(filepath=path)
+    assert "Cube" in handlers.SESSIONS
+
+    bpy.ops.wm.open_mainfile(filepath=path)
+    try:
+        assert not handlers.SESSIONS, (
+            f"open_mainfile left {list(handlers.SESSIONS)} behind"
+        )
+    finally:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        if os.path.exists(path):
+            os.remove(path)
+
+
+def test_the_handler_survives_a_load():
+    """Blender drops a non-persistent load handler on the first load, which
+    would have made this guard protect exactly one file."""
+    import marrow
+    from marrow.blender.handlers import free_on_load
+
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    try:
+        marrow.unregister()
+    except Exception:
+        pass
+    marrow.register()
+    assert free_on_load in bpy.app.handlers.load_pre
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    assert free_on_load in bpy.app.handlers.load_pre, (
+        "the handler removed itself on load - mark it persistent"
+    )

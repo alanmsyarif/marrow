@@ -185,9 +185,9 @@ def _world_centre(obj):
 def _played(obj, frames=6):
     from marrow.blender import handlers
 
-    # SESSIONS is keyed by object name and survives read_factory_settings, so
-    # a previous cube leaves a live session the handler would reuse. Other
-    # modules in this suite clear it for the same reason.
+    # Belt and braces. A load clears SESSIONS now - see free_on_load - but
+    # this helper builds its cube without one, and a leftover session keyed
+    # by the same object name is exactly what this file is measuring against.
     handlers.free_all()
     scene = bpy.context.scene
     scene.frame_start, scene.frame_end = 1, frames
