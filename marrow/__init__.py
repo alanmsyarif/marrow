@@ -36,7 +36,7 @@ def register():
         migrate_collider_slots,
     )
     from .blender.ui import (
-        MARROW_PT_panel,
+        PANEL_CLASSES,
         MARROW_UL_colliders,
         MarrowColliderSettings,
         MarrowColliderSlot,
@@ -56,8 +56,7 @@ def register():
         MARROW_OT_bake,
         MARROW_OT_live,
         MARROW_OT_free,
-        MARROW_PT_panel,
-    )
+    ) + PANEL_CLASSES
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Object.marrow = bpy.props.PointerProperty(type=MarrowSettings)

@@ -8,7 +8,7 @@ first" back. Drawing them on a plain mesh offers work that cannot be done.
 import bpy
 
 import marrow
-from marrow.blender.ui import MARROW_PT_panel
+from marrow.blender.ui import PANEL_CLASSES, MARROW_PT_panel
 
 
 class _Layout:
@@ -66,9 +66,28 @@ def _fresh():
 
 
 def _drawn_for(obj):
+    """Everything the Marrow tab offers, parent and sub-panels together.
+
+    The settings live in sub-panels now, and Blender draws one only when its
+    poll passes. Walking them here is what keeps this measuring the panel a
+    user sees rather than one class of it - and it makes the poll gating
+    part of what is asserted, which is where the "no cage, no controls" rule
+    actually lives now.
+
+    A sub-panel is recorded as ("panel", label) before its contents, so a
+    test can tell a section being offered from a stray label inside one.
+    """
     bpy.context.view_layer.objects.active = obj
     layout = _Layout()
     MARROW_PT_panel.draw(_Panel(layout), bpy.context)
+    for cls in PANEL_CLASSES[1:]:
+        if not cls.poll(bpy.context):
+            continue
+        layout.drawn.append(("panel", cls.bl_label))
+        header = getattr(cls, "draw_header", None)
+        if header is not None:
+            header(_Panel(layout), bpy.context)
+        cls.draw(_Panel(layout), bpy.context)
     return layout.drawn
 
 
@@ -82,8 +101,8 @@ def test_a_mesh_with_no_cage_shows_only_the_cage_box():
     assert ("operator", "marrow.tetrahedralize") in drawn, (
         "the way out of this state must still be offered"
     )
-    assert ("label", "Simulation") not in drawn
-    assert ("label", "Display") not in drawn
+    assert ("panel", "Simulation") not in drawn
+    assert ("panel", "Display") not in drawn
     assert ("operator", "marrow.bake") not in drawn
     assert ("operator", "marrow.live_toggle") not in drawn
     assert ("operator", "marrow.free") not in drawn
@@ -111,8 +130,8 @@ def test_a_tetrahedralized_body_shows_the_simulation_settings():
 
     drawn = _drawn_for(obj)
 
-    assert ("label", "Simulation") in drawn
-    assert ("label", "Display") in drawn
+    assert ("panel", "Simulation") in drawn
+    assert ("panel", "Display") in drawn
     assert ("prop", "substeps") in drawn
     assert ("prop", "collider_collection") in drawn
     assert ("prop_search", "pin_group") in drawn
@@ -127,7 +146,7 @@ def test_de_tetrahedralizing_hides_the_settings_again():
     obj = bpy.context.active_object
     obj.marrow.resolution = 0.5
     bpy.ops.marrow.tetrahedralize()
-    assert ("label", "Simulation") in _drawn_for(obj)
+    assert ("panel", "Simulation") in _drawn_for(obj)
 
     bpy.ops.marrow.detetrahedralize()
-    assert ("label", "Simulation") not in _drawn_for(obj)
+    assert ("panel", "Simulation") not in _drawn_for(obj)

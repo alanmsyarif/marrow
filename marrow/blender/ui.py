@@ -466,6 +466,42 @@ class MarrowSettings(bpy.types.PropertyGroup):
     )
 
 
+def _cage_of(context):
+    """The active object's cage, or None. The gate every sub-panel shares.
+
+    Sub-panels do not inherit the parent's poll, so each one asks for itself.
+    That is nine short walks over an object's children per redraw, against
+    nine boxes that used to be drawn at full height whether or not they had
+    anything to say.
+    """
+    obj = context.active_object
+    if obj is None or obj.type != "MESH":
+        return None
+    from .session import find_cage
+
+    return find_cage(obj)
+
+
+class _MarrowSub:
+    """Shared plumbing for every sub-panel under the Marrow tab.
+
+    Collapsed by default, and remembered per user: Blender stores the open
+    state with the panel, so opening Fiber once keeps it open. That is the
+    point of the split - the panel drew ten boxes at full height every
+    redraw, and Colliders sat below the fold at a normal sidebar width.
+    """
+
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Marrow"
+    bl_parent_id = "MARROW_PT_panel"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return _cage_of(context) is not None
+
+
 class MARROW_PT_panel(bpy.types.Panel):
     bl_label = "Marrow"
     bl_idname = "MARROW_PT_panel"
@@ -491,144 +527,19 @@ class MARROW_PT_panel(bpy.types.Panel):
         row.prop(settings, "min_resolution")
         cage.operator("marrow.tetrahedralize", icon="MESH_ICOSPHERE")
 
-        from .session import find_cage
-
-        if find_cage(obj) is None:
+        if _cage_of(context) is None:
             # Everything below acts on a cage. The sliders would feed a solver
             # that does not exist and Live, Bake and Free can only report the
-            # same "run Tetrahedralize first" back, so offer none of it.
+            # same "run Tetrahedralize first" back, so offer none of it. The
+            # sub-panels poll on the same condition and hide themselves.
             layout.label(text="Tetrahedralize to simulate", icon="INFO")
             return
 
         cage.operator("marrow.detetrahedralize", icon="X")
 
-        sim = layout.box()
-        sim.label(text="Simulation")
-        sim.prop(settings, "substeps")
-        sim.prop(settings, "stiffness")
-        sim.prop(settings, "volume_preservation")
-        # Directly under the two sliders it scales, because that is the only
-        # thing it does - it makes those numbers local instead of global.
-        region = sim.column(align=True)
-        region.prop_search(
-            settings, "region_group", obj, "vertex_groups", text="Stiffness Group"
-        )
-        row = region.row()
-        row.enabled = bool(settings.region_group)
-        row.prop(settings, "region_softest")
-        sim.prop(settings, "damping")
-        # A material property of the body, so it sits with stiffness and
-        # damping rather than in any one contact box - it is the value the
-        # ground, self-collision and body-to-body all read.
-        sim.prop(settings, "friction")
-
-        ground = sim.box()
-        ground.prop(settings, "ground_enabled")
-        row = ground.row()
-        row.enabled = settings.ground_enabled
-        row.prop(settings, "ground_z")
-
-        tearing = sim.box()
-        tearing.prop(settings, "tearing_enabled")
-        row = tearing.row()
-        row.enabled = settings.tearing_enabled
-        row.prop(settings, "tear_threshold")
-
-        attach = sim.box()
-        attach.prop(settings, "attach_enabled")
-        row = attach.row()
-        row.enabled = settings.attach_enabled
-        row.prop(settings, "attach_stiffness")
-
-        # Below Attachment because that is the ordering the solver has:
-        # the attach kernel skips a node with no inverse mass, so a pin
-        # outranks the armature rather than fighting it.
-        pin = sim.box()
-        pin.label(text="Pin", icon="PINNED")
-        pin.prop_search(settings, "pin_group", obj, "vertex_groups", text="")
-        # Targets arrive through the attachment pass, so the checkbox drives
-        # nothing without it - grey rather than offer a dead option.
-        row = pin.row()
-        row.enabled = settings.attach_enabled
-        row.prop(settings, "pin_follows")
-
-        # Below the elastic settings because fiber is a material term like
-        # them, and above the contact boxes because it is not contact.
-        fiber = sim.box()
-        fiber.prop(settings, "fiber_enabled")
-        column = fiber.column()
-        column.enabled = settings.fiber_enabled
-        column.prop(settings, "fiber_curve")
-
-        from .storage import read_fiber
-
-        cage_obj = find_cage(obj)
-        if read_fiber(cage_obj.data) is None:
-            # The curve is baked at Tetrahedralize, so setting it here does
-            # nothing on its own. Say that rather than let it look broken.
-            column.label(text="Tetrahedralize to bake fibers", icon="INFO")
-        else:
-            column.prop(settings, "fiber_stiffness")
-            column.prop(settings, "fiber_bend")
-            column.prop(settings, "wave_amplitude")
-            column.prop(settings, "wave_length")
-            column.prop(settings, "wave_speed")
-            column.prop(settings, "waveform")
-            column.prop(settings, "wave_noise")
-
-        contact = sim.box()
-        contact.prop(settings, "self_collision")
-        contact.prop(settings, "body_collision")
-        row = contact.row()
-        row.enabled = settings.self_collision or settings.body_collision
-        row.prop(settings, "self_thickness")
-
-        # Colliders belong to the body being simulated: point it at a
-        # collection here rather than walking to each object and tagging it.
-        box = sim.box()
-        box.label(text="Colliders", icon="PHYSICS")
-        box.prop(settings, "collider_collection", text="")
-        collection = settings.collider_collection
-        row = box.row()
-        if collection is None:
-            row.label(
-                text="Select objects and press + to collide against them",
-                icon="INFO",
-            )
-        else:
-            row.template_list(
-                "MARROW_UL_colliders", "",
-                collection, "all_objects",
-                settings, "active_collider",
-                rows=2,
-            )
-        col = row.column(align=True)
-        col.operator("marrow.collider_add", icon="ADD", text="")
-        col.operator("marrow.collider_remove", icon="REMOVE", text="")
-
-        # Friction is per collider, so it follows the list selection. Sticky
-        # already holds the material outright, so the row greys out rather
-        # than offering a value the solver will ignore.
-        active = None
-        if collection is not None:
-            objects = list(collection.all_objects)
-            if 0 <= settings.active_collider < len(objects):
-                active = objects[settings.active_collider]
-        if active is not None:
-            row = box.row()
-            row.enabled = not active.marrow_collider.sticky
-            row.prop(active.marrow_collider, "friction")
-
-        row = box.row()
-        row.enabled = collection is not None and any(
-            ob.marrow_collider.sticky for ob in collection.all_objects
-        )
-        row.prop(settings, "stick_break")
-
-        display = layout.box()
-        display.label(text="Display", icon="COLOR")
-        display.prop(settings, "false_color")
-
+        # Above the sub-panels, not below: a sub-panel always draws after its
+        # parent, so leaving these last would put the three buttons pressed
+        # most often behind every collapsed section.
         from . import handlers
 
         session = handlers.SESSIONS.get(obj.name)
@@ -655,3 +566,219 @@ class MARROW_PT_panel(bpy.types.Panel):
                      "Live: play the timeline",
                 icon="REC",
             )
+
+
+class MARROW_PT_simulation(_MarrowSub, bpy.types.Panel):
+    bl_label = "Simulation"
+    bl_idname = "MARROW_PT_simulation"
+    bl_order = 0
+    # The one section that opens with the panel. Everything in it is a
+    # material property of the body, so it is what you reach for first.
+    bl_options = set()
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        settings = obj.marrow
+
+        layout.prop(settings, "substeps")
+        layout.prop(settings, "stiffness")
+        layout.prop(settings, "volume_preservation")
+        # Directly under the two sliders it scales, because that is the only
+        # thing it does - it makes those numbers local instead of global.
+        region = layout.column(align=True)
+        region.prop_search(
+            settings, "region_group", obj, "vertex_groups", text="Stiffness Group"
+        )
+        row = region.row()
+        row.enabled = bool(settings.region_group)
+        row.prop(settings, "region_softest")
+        layout.prop(settings, "damping")
+        # A material property of the body, so it sits with stiffness and
+        # damping rather than in any one contact panel - it is the value the
+        # ground, self-collision and body-to-body all read.
+        layout.prop(settings, "friction")
+
+
+class MARROW_PT_ground(_MarrowSub, bpy.types.Panel):
+    bl_label = "Ground Plane"
+    bl_idname = "MARROW_PT_ground"
+    bl_order = 1
+
+    def draw_header(self, context):
+        self.layout.prop(context.active_object.marrow, "ground_enabled", text="")
+
+    def draw(self, context):
+        settings = context.active_object.marrow
+        self.layout.enabled = settings.ground_enabled
+        self.layout.prop(settings, "ground_z")
+
+
+class MARROW_PT_tearing(_MarrowSub, bpy.types.Panel):
+    bl_label = "Tearing"
+    bl_idname = "MARROW_PT_tearing"
+    bl_order = 2
+
+    def draw_header(self, context):
+        self.layout.prop(context.active_object.marrow, "tearing_enabled", text="")
+
+    def draw(self, context):
+        settings = context.active_object.marrow
+        self.layout.enabled = settings.tearing_enabled
+        self.layout.prop(settings, "tear_threshold")
+
+
+class MARROW_PT_attachment(_MarrowSub, bpy.types.Panel):
+    bl_label = "Attachment"
+    bl_idname = "MARROW_PT_attachment"
+    bl_order = 3
+
+    def draw_header(self, context):
+        self.layout.prop(context.active_object.marrow, "attach_enabled", text="")
+
+    def draw(self, context):
+        settings = context.active_object.marrow
+        self.layout.enabled = settings.attach_enabled
+        self.layout.prop(settings, "attach_stiffness")
+
+
+class MARROW_PT_pin(_MarrowSub, bpy.types.Panel):
+    # Below Attachment because that is the ordering the solver has: the
+    # attach kernel skips a node with no inverse mass, so a pin outranks the
+    # armature rather than fighting it.
+    bl_label = "Pin"
+    bl_idname = "MARROW_PT_pin"
+    bl_order = 4
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        settings = obj.marrow
+        layout.prop_search(settings, "pin_group", obj, "vertex_groups", text="")
+        # Targets arrive through the attachment pass, so the checkbox drives
+        # nothing without it - grey rather than offer a dead option.
+        row = layout.row()
+        row.enabled = settings.attach_enabled
+        row.prop(settings, "pin_follows")
+
+
+class MARROW_PT_fiber(_MarrowSub, bpy.types.Panel):
+    # Below the elastic settings because fiber is a material term like them,
+    # and above the contact panels because it is not contact.
+    bl_label = "Fiber"
+    bl_idname = "MARROW_PT_fiber"
+    bl_order = 5
+
+    def draw_header(self, context):
+        self.layout.prop(context.active_object.marrow, "fiber_enabled", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.active_object.marrow
+        layout.enabled = settings.fiber_enabled
+        layout.prop(settings, "fiber_curve")
+
+        from .storage import read_fiber
+
+        if read_fiber(_cage_of(context).data) is None:
+            # The curve is baked at Tetrahedralize, so setting it here does
+            # nothing on its own. Say that rather than let it look broken.
+            layout.label(text="Tetrahedralize to bake fibers", icon="INFO")
+            return
+        layout.prop(settings, "fiber_stiffness")
+        layout.prop(settings, "fiber_bend")
+        layout.prop(settings, "wave_amplitude")
+        layout.prop(settings, "wave_length")
+        layout.prop(settings, "wave_speed")
+        layout.prop(settings, "waveform")
+        layout.prop(settings, "wave_noise")
+
+
+class MARROW_PT_contact(_MarrowSub, bpy.types.Panel):
+    bl_label = "Contact"
+    bl_idname = "MARROW_PT_contact"
+    bl_order = 6
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.active_object.marrow
+        layout.prop(settings, "self_collision")
+        layout.prop(settings, "body_collision")
+        row = layout.row()
+        row.enabled = settings.self_collision or settings.body_collision
+        row.prop(settings, "self_thickness")
+
+
+class MARROW_PT_colliders(_MarrowSub, bpy.types.Panel):
+    # Colliders belong to the body being simulated: point it at a collection
+    # here rather than walking to each object and tagging it.
+    bl_label = "Colliders"
+    bl_idname = "MARROW_PT_colliders"
+    bl_order = 7
+
+    def draw(self, context):
+        layout = self.layout
+        settings = context.active_object.marrow
+        layout.prop(settings, "collider_collection", text="")
+        collection = settings.collider_collection
+        row = layout.row()
+        if collection is None:
+            row.label(
+                text="Select objects and press + to collide against them",
+                icon="INFO",
+            )
+        else:
+            row.template_list(
+                "MARROW_UL_colliders", "",
+                collection, "all_objects",
+                settings, "active_collider",
+                rows=2,
+            )
+        col = row.column(align=True)
+        col.operator("marrow.collider_add", icon="ADD", text="")
+        col.operator("marrow.collider_remove", icon="REMOVE", text="")
+
+        # Friction is per collider, so it follows the list selection. Sticky
+        # already holds the material outright, so the row greys out rather
+        # than offering a value the solver will ignore.
+        active = None
+        if collection is not None:
+            objects = list(collection.all_objects)
+            if 0 <= settings.active_collider < len(objects):
+                active = objects[settings.active_collider]
+        if active is not None:
+            row = layout.row()
+            row.enabled = not active.marrow_collider.sticky
+            row.prop(active.marrow_collider, "friction")
+
+        row = layout.row()
+        row.enabled = collection is not None and any(
+            ob.marrow_collider.sticky for ob in collection.all_objects
+        )
+        row.prop(settings, "stick_break")
+
+
+class MARROW_PT_display(_MarrowSub, bpy.types.Panel):
+    bl_label = "Display"
+    bl_idname = "MARROW_PT_display"
+    bl_order = 8
+
+    def draw(self, context):
+        self.layout.prop(context.active_object.marrow, "false_color")
+
+
+# The parent must register before any child naming it as bl_parent_id, so
+# this is an ordered tuple. Exported whole because the addon's register()
+# should not have to know how many sections there are.
+PANEL_CLASSES = (
+    MARROW_PT_panel,
+    MARROW_PT_simulation,
+    MARROW_PT_ground,
+    MARROW_PT_tearing,
+    MARROW_PT_attachment,
+    MARROW_PT_pin,
+    MARROW_PT_fiber,
+    MARROW_PT_contact,
+    MARROW_PT_colliders,
+    MARROW_PT_display,
+)

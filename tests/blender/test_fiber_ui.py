@@ -120,17 +120,13 @@ def test_a_cage_with_no_fibers_still_builds_a_session():
 
 
 def _drawn_for(obj):
-    """Panel controls actually offered, via the recorder test_panel_gating
-    already uses. Blender hands out a real UILayout only inside a draw
-    callback, so the panel is driven against a stand-in instead."""
-    from test_panel_gating import _Layout, _Panel
+    """Panel controls actually offered, via the walker test_panel_gating
+    owns. Fiber lives in a sub-panel now, so a helper that drew only the
+    parent would see none of it - and the copy that used to live here would
+    have gone on passing by asserting nothing."""
+    from test_panel_gating import _drawn_for as walk
 
-    from marrow.blender.ui import MARROW_PT_panel
-
-    bpy.context.view_layer.objects.active = obj
-    layout = _Layout()
-    MARROW_PT_panel.draw(_Panel(layout), bpy.context)
-    return layout.drawn
+    return walk(obj)
 
 
 def test_the_panel_offers_the_wave_controls_once_fibers_are_baked():
