@@ -195,7 +195,7 @@ class GPUSolver:
         # Force fields. Always allocated so predict can bind it
         # unconditionally; n_fields 0 makes the loop body dead.
         self.n_fields = 0
-        self.tex_fields = blank(3)
+        self.tex_fields = blank(FIELD_TEXELS)
         self.set_fields(fields)
 
         # Seconds of simulated time, for the fiber wave. Per substep, not
@@ -410,6 +410,7 @@ class GPUSolver:
         self.sh_predict.uniform_float("gravity", tuple(self.params.gravity))
         self.sh_predict.uniform_int("n_nodes", self.n_nodes)
         self.sh_predict.uniform_int("n_fields", self.n_fields)
+        self.sh_predict.uniform_float("field_time", self.sim_time)
         gpu.compute.dispatch(self.sh_predict, node_groups, 1, 1)
 
         for c in range(len(self.offsets) - 1):
@@ -760,25 +761,43 @@ class GPUSolver:
         )
 
 
+FIELD_ROW = 13
+FIELD_TEXELS = 4
+
+
 def pack_fields(fields) -> np.ndarray:
-    """Three texels per field: origin+kind, axis+strength, then the falloff.
+    """Four texels per field: origin+kind, axis+strength, falloff, turbulence.
 
     Free function rather than a method because the parity test builds one
     without a solver, and because it is the only place the texel layout is
     written down - the GLSL reader in PREDICT_SRC is the other half.
+
+    A row is (kind, origin xyz, axis xyz, strength, power, max_dist, size,
+    flow, seed). Short rows are accepted and padded, so a caller that only
+    wants a Wind can still write ten numbers.
     """
-    rows = np.asarray(fields, dtype=np.float64) if fields is not None else np.zeros((0, 10))
-    if rows.size == 0:
-        return np.zeros((1, 3, 4), dtype=np.float32)
+    if fields is None:
+        rows = np.zeros((0, FIELD_ROW))
+    else:
+        rows = np.zeros((len(fields), FIELD_ROW))
+        for i, row in enumerate(fields):
+            row = np.asarray(row, dtype=np.float64)
+            rows[i, : row.shape[0]] = row
+    if rows.shape[0] == 0:
+        return np.zeros((1, FIELD_TEXELS, 4), dtype=np.float32)
     n = rows.shape[0]
-    values = np.zeros((3 * n, 4), dtype=np.float64)
-    values[0::3, :3] = rows[:, 1:4]      # origin
-    values[0::3, 3] = rows[:, 0]         # kind
-    values[1::3, :3] = rows[:, 4:7]      # axis
-    values[1::3, 3] = rows[:, 7]         # strength
-    values[2::3, 0] = rows[:, 8]         # falloff power
-    values[2::3, 1] = rows[:, 9]         # max distance, 0 for unlimited
-    width, height = texture_shape(3 * n)
+    t = FIELD_TEXELS
+    values = np.zeros((t * n, 4), dtype=np.float64)
+    values[0::t, :3] = rows[:, 1:4]      # origin
+    values[0::t, 3] = rows[:, 0]         # kind
+    values[1::t, :3] = rows[:, 4:7]      # axis
+    values[1::t, 3] = rows[:, 7]         # strength
+    values[2::t, 0] = rows[:, 8]         # falloff power
+    values[2::t, 1] = rows[:, 9]         # max distance, 0 for unlimited
+    values[3::t, 0] = rows[:, 10]        # turbulence size
+    values[3::t, 1] = rows[:, 11]        # turbulence flow
+    values[3::t, 2] = rows[:, 12]        # turbulence seed
+    width, height = texture_shape(t * n)
     image = np.zeros((height, width, 4), dtype=np.float32)
-    image.reshape(-1, 4)[: 3 * n] = values.astype(np.float32)
+    image.reshape(-1, 4)[: t * n] = values.astype(np.float32)
     return image

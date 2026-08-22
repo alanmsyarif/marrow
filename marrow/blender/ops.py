@@ -467,21 +467,22 @@ def session_for(obj) -> MarrowSession:
     )
 
 
-FIELD_KINDS = {"FORCE": 1, "WIND": 2, "VORTEX": 3}
+FIELD_KINDS = {"FORCE": 1, "WIND": 2, "VORTEX": 3, "TURBULENCE": 4}
 
 
 def field_specs_of(obj):
     """One row per supported force field in ``obj``'s field collection.
 
-    Rows are (kind, origin xyz, axis xyz, strength, power, max_dist), all in
-    world space, which is the layout gpu.solver.pack_fields writes and
-    PREDICT_SRC reads.
+    Rows are (kind, origin xyz, axis xyz, strength, power, max_dist, size,
+    flow, seed), all in world space, which is the layout
+    gpu.solver.pack_fields writes and PREDICT_SRC reads.
 
     Blender exposes no way to ask it for the combined field at a point, so
-    the three field types with a closed form worth having are reimplemented:
-    Force pulls along the radius, Wind blows along the field object local
-    +Z, Vortex turns around that same axis. Anything else in the collection
-    is skipped rather than silently approximated by the wrong one.
+    the supported types are reimplemented: Force pushes along the radius,
+    Wind blows along the field object local +Z, Vortex turns around that
+    same axis, and Turbulence is a smooth swirling field answering to Size,
+    Flow and Seed. Anything else is skipped rather than silently
+    approximated by the wrong one.
     """
     collection = obj.marrow.field_collection
     if collection is None:
@@ -504,6 +505,9 @@ def field_specs_of(obj):
             float(field.strength),
             float(field.falloff_power),
             float(field.distance_max) if field.use_max_distance else 0.0,
+            float(getattr(field, "size", 1.0)),
+            float(getattr(field, "flow", 0.0)),
+            float(getattr(field, "seed", 0)),
         ))
     return rows
 

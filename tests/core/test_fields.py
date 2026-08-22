@@ -90,3 +90,49 @@ def test_fields_add_together():
     ]
     out = field_accel(np.zeros((1, 3)), rows)
     assert np.allclose(out[0], [2.0, 3.0, 0.0])
+
+
+def test_turbulence_is_bounded_and_varied():
+    from marrow.core.solver_ref import turbulence
+
+    pts = np.random.default_rng(1).uniform(-6.0, 6.0, size=(800, 3))
+    out = turbulence(pts, 0.0, 1.0, 0.0, 0.0)
+    assert np.abs(out).max() <= 1.0 + 1e-12, out.max()
+    assert out.std(axis=0).min() > 0.1, out.std(axis=0)
+
+
+def test_turbulence_seed_decorrelates_two_fields():
+    from marrow.core.solver_ref import turbulence
+
+    pts = np.random.default_rng(2).uniform(-4.0, 4.0, size=(400, 3))
+    a = turbulence(pts, 0.0, 1.0, 0.0, 0.0)
+    b = turbulence(pts, 0.0, 1.0, 0.0, 5.0)
+    assert np.abs(a - b).max() > 0.1, "the seed must change the pattern"
+
+
+def test_turbulence_size_sets_the_scale():
+    """Small Size swirls tightly, so neighbouring points differ more."""
+    from marrow.core.solver_ref import turbulence
+
+    line = np.stack([np.linspace(0.0, 6.0, 400), np.zeros(400), np.zeros(400)], axis=1)
+    tight = turbulence(line, 0.0, 0.3, 0.0, 0.0)
+    loose = turbulence(line, 0.0, 4.0, 0.0, 0.0)
+    assert np.abs(np.diff(tight, axis=0)).mean() > np.abs(np.diff(loose, axis=0)).mean()
+
+
+def test_turbulence_is_still_without_flow():
+    from marrow.core.solver_ref import turbulence
+
+    pts = np.random.default_rng(3).uniform(-2.0, 2.0, size=(200, 3))
+    assert np.array_equal(
+        turbulence(pts, 0.0, 1.0, 0.0, 0.0), turbulence(pts, 9.0, 1.0, 0.0, 0.0)
+    ), "flow 0 must leave the field frozen"
+
+
+def test_turbulence_moves_with_flow():
+    from marrow.core.solver_ref import turbulence
+
+    pts = np.random.default_rng(4).uniform(-2.0, 2.0, size=(200, 3))
+    a = turbulence(pts, 0.0, 1.0, 1.5, 0.0)
+    b = turbulence(pts, 1.0, 1.0, 1.5, 0.0)
+    assert np.abs(a - b).max() > 0.1

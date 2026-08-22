@@ -18,7 +18,7 @@ IMAGES = PREDICT_IMAGES
 PUSH = PREDICT_PUSH
 
 
-def _run_predict(state, params, h, fields=None):
+def _run_predict(state, params, h, fields=None, t=0.0):
     shader = build("predict", PREDICT_SRC, IMAGES, PUSH)
     n = state.nodes.shape[0]
 
@@ -39,6 +39,10 @@ def _run_predict(state, params, h, fields=None):
     shader.uniform_float("gravity", tuple(params.gravity))
     shader.uniform_int("n_nodes", n)
     shader.uniform_int("n_fields", len(rows))
+    # Every push constant the kernel declares has to be set, even the
+    # ones a given case does not exercise - an unset one holds whatever
+    # was in the block last, which is the sort of pass that means nothing.
+    shader.uniform_float("field_time", t)
     gpu.compute.dispatch(shader, (n + 63) // 64, 1, 1)
 
     flush(make_flush_shader("RGBA32F"), tex_p)
@@ -159,4 +163,60 @@ def test_no_fields_is_bit_identical_to_before_they_existed():
     h = params.dt / params.substeps
     assert np.array_equal(
         _run_predict(state, params, h), _run_predict(state, params, h, [])
+    )
+
+
+def test_predict_matches_the_oracle_with_turbulence():
+    """The one field with no closed form in Blender, so it is reimplemented
+    rather than reproduced - which makes the oracle diff the only thing
+    holding the GLSL and the numpy to the same shape of noise."""
+    from marrow.core.solver_ref import FIELD_TURBULENCE, field_accel
+
+    params = SolverParams(gravity=(0.0, 0.0, 0.0))
+    state = make_state(CUBE.nodes)
+    h = params.dt / params.substeps
+    rows = [(float(FIELD_TURBULENCE), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+             6.0, 0.0, 0.0, 0.8, 0.0, 3.0)]
+
+    movable = state.inv_mass > 0.0
+    want = state.nodes.copy()
+    want[movable] += field_accel(state.nodes, rows)[movable] * (h * h)
+    assert_close(_run_predict(state, params, h, rows), want, TOL, "turbulence")
+
+
+def test_turbulence_varies_across_the_cage():
+    """A field that came out constant would pass a parity test happily and
+    still be useless, so this pins the thing parity cannot see."""
+    from marrow.core.solver_ref import turbulence
+
+    noise = turbulence(CUBE.nodes, 0.0, 0.5, 0.0, 0.0)
+    assert noise.std(axis=0).min() > 1e-3, (
+        f"turbulence is nearly uniform over the cage: {noise.std(axis=0)}"
+    )
+    assert np.abs(noise).max() <= 1.0 + 1e-12
+
+
+def test_turbulence_flows_with_time():
+    """Flow animates the noise, so the same node sees a different push a
+    second later. Its own parity case, because field_time is the one push
+    constant nothing else in this module exercises."""
+    from marrow.core.solver_ref import FIELD_TURBULENCE, field_accel
+
+    params = SolverParams(gravity=(0.0, 0.0, 0.0))
+    h = params.dt / params.substeps
+    rows = [(float(FIELD_TURBULENCE), 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+             6.0, 0.0, 0.0, 0.8, 2.0, 0.0)]
+
+    seen = {}
+    for t in (0.0, 0.9):
+        state = make_state(CUBE.nodes)
+        movable = state.inv_mass > 0.0
+        want = state.nodes.copy()
+        want[movable] += field_accel(state.nodes, rows, t)[movable] * (h * h)
+        got = _run_predict(state, params, h, rows, t)
+        assert_close(got, want, TOL, f"turbulence flowing at t={t}")
+        seen[t] = got
+
+    assert np.abs(seen[0.0] - seen[0.9]).max() > 1e-6, (
+        "flow did not animate the field - field_time is not reaching it"
     )

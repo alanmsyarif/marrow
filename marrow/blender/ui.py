@@ -322,7 +322,7 @@ class MarrowSettings(bpy.types.PropertyGroup):
     field_collection: bpy.props.PointerProperty(
         name="Force Fields",
         description=(
-            "Every Force, Wind and Vortex field in this collection pushes "
+            "Every Force, Wind, Vortex and Turbulence field in this collection pushes "
             "the body, nested collections included. Their own strength, "
             "falloff and max distance are read from the field settings on "
             "each object. Other field types are ignored"
@@ -788,7 +788,7 @@ class MARROW_PT_fields(_MarrowSub, bpy.types.Panel):
         supported = [
             ob for ob in settings.field_collection.all_objects
             if getattr(ob, "field", None) is not None
-            and ob.field.type in {"FORCE", "WIND", "VORTEX"}
+            and ob.field.type in {"FORCE", "WIND", "VORTEX", "TURBULENCE"}
         ]
         total = len(settings.field_collection.all_objects)
         layout.label(

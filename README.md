@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.2.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.3.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -355,9 +355,11 @@ One more reason to turn Attachment on here: modifiers are only muted in the disp
 
 **Gravity comes from the scene.** Marrow used to hardcode -9.81 and ignore Scene Properties, so turning gravity off in the place every other Blender physics system reads it did nothing here. It now obeys both the direction and the switch, and the per-body **Gravity** multiplier rides on top: 0 makes one body weightless while the rest of the shot still falls, and a negative value falls upwards.
 
-**Force Fields** takes a collection, the same way Colliders does. Every **Force**, **Wind** and **Vortex** object in it pushes the body, nested collections included, and their strength, falloff power and max distance are read from the field settings on each object rather than duplicated into the Marrow panel. Force pushes along the radius from the field object, Wind blows along its local +Z, and Vortex turns around that same axis. The panel reports how many objects in the collection actually drive the body, so a collection of the wrong field type says so instead of doing nothing quietly.
+**Force Fields** takes a collection, the same way Colliders does. Every **Force**, **Wind**, **Vortex** and **Turbulence** object in it pushes the body, nested collections included, and their strength, falloff power and max distance are read from the field settings on each object rather than duplicated into the Marrow panel. Force pushes along the radius from the field object, Wind blows along its local +Z, Vortex turns around that same axis, and Turbulence swirls, answering to **Size**, **Flow** and **Seed**. The panel reports how many objects in the collection actually drive the body, so a collection of the wrong field type says so instead of doing nothing quietly.
 
-Other field types are ignored. Blender exposes no way to ask it for the combined field at a point, so these three are reimplemented against their documented falloff; Turbulence and the rest have no closed form worth approximating, and guessing at one would be worse than skipping it.
+Other field types are ignored. Blender exposes no way to ask it for the combined field at a point, so the supported ones are reimplemented against their documented falloff; Magnetic and the rest need models nothing here has, and guessing at one would be worse than skipping it.
+
+**Turbulence is not Blender's Perlin turbulence.** It is three octaves of sine read through oblique directions - a smooth swirling field that varies across the body, drifts with Flow and shifts with Seed, but will not match a particle sim driven by the same field object. That is a deliberate trade for correctness elsewhere: lattice noise has to floor a coordinate to an integer, and float32 on the card floors a value a hair either side of a lattice line differently from the float64 reference solver every kernel here is diffed against. A whole cell of difference against a 2e-5 tolerance would fail at random, so the fiber wave and this both use sines instead.
 
 Fields are evaluated in the kernel, where the node actually is, from a texture holding three texels per field. An animated field costs one upload of a few pixels per frame however large the cage is - the cost does not scale with the body.
 

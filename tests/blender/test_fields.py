@@ -129,10 +129,73 @@ def test_an_empty_field_collection_changes_nothing():
 
 
 def test_an_unsupported_field_type_is_ignored():
-    """Turbulence has no closed form worth reimplementing here. Skipping it
-    beats approximating it with the wrong one and calling that wind."""
+    """Magnetic needs a velocity cross product and a charge model that
+    nothing here has. Skipping it beats approximating it with the wrong one
+    and calling that wind."""
     obj = _body()
     obj.marrow.gravity_scale = 0.0
-    noise = _field("TURBULENCE", (0.0, 0.0, 0.0), 50.0)
-    obj.marrow.field_collection = _collection_with(noise)
+    magnet = _field("MAGNET", (0.0, 0.0, 0.0), 50.0)
+    obj.marrow.field_collection = _collection_with(magnet)
     assert np.linalg.norm(_travel(obj)) < 1e-3
+
+
+def test_turbulence_moves_the_body():
+    obj = _body()
+    obj.marrow.gravity_scale = 0.0
+    noise = _field("TURBULENCE", (0.0, 0.0, 0.0), 60.0)
+    noise.field.size = 1.0
+    obj.marrow.field_collection = _collection_with(noise)
+    assert np.linalg.norm(_travel(obj)) > 0.05
+
+
+def test_turbulence_is_not_a_uniform_push():
+    """The whole point: it has to vary across the body, or it is just a wind
+    with extra settings. Compares how far each render vertex travelled."""
+    obj = _body(resolution=0.4)
+    obj.marrow.gravity_scale = 0.0
+    noise = _field("TURBULENCE", (0.0, 0.0, 0.0), 60.0)
+    noise.field.size = 0.7
+    obj.marrow.field_collection = _collection_with(noise)
+
+    n = len(obj.data.vertices)
+    before = np.empty(n * 3)
+    obj.data.vertices.foreach_get("co", before)
+    _travel(obj)
+    after = np.empty(n * 3)
+    obj.data.vertices.foreach_get("co", after)
+    moved = np.linalg.norm(
+        after.reshape(-1, 3) - before.reshape(-1, 3), axis=1
+    )
+    assert moved.std() > 0.01, (
+        f"every vertex moved alike ({moved.std():.4f}) - that is a wind, "
+        f"not turbulence"
+    )
+
+
+def test_the_seed_changes_the_pattern():
+    """Two turbulence fields in the same place must not push identically,
+    which is the only thing Seed is for."""
+    travels = []
+    for seed in (0, 7):
+        obj = _body()
+        obj.marrow.gravity_scale = 0.0
+        noise = _field("TURBULENCE", (0.0, 0.0, 0.0), 60.0)
+        noise.field.size = 1.0
+        noise.field.seed = seed
+        obj.marrow.field_collection = _collection_with(noise)
+        travels.append(_travel(obj))
+    assert np.linalg.norm(travels[0] - travels[1]) > 0.01, (
+        f"seed made no difference: {np.round(travels[0], 4)}"
+    )
+
+
+def test_size_changes_how_tightly_it_swirls():
+    travels = []
+    for size in (0.3, 4.0):
+        obj = _body()
+        obj.marrow.gravity_scale = 0.0
+        noise = _field("TURBULENCE", (0.0, 0.0, 0.0), 60.0)
+        noise.field.size = size
+        obj.marrow.field_collection = _collection_with(noise)
+        travels.append(_travel(obj))
+    assert np.linalg.norm(travels[0] - travels[1]) > 0.01

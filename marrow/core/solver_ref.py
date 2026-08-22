@@ -68,17 +68,63 @@ def make_state(nodes: np.ndarray, density: float = 1.0, pinned=None) -> SolverSt
 FIELD_FORCE = 1
 FIELD_WIND = 2
 FIELD_VORTEX = 3
+FIELD_TURBULENCE = 4
+
+# Three octaves of sine, each reading the position through a different
+# oblique direction so no octave is flat along any axis. Frequencies are not
+# octave doublings - 2.17 and 4.63 share no small common multiple with 1, so
+# the sum does not line back up into visible bands the way 1/2/4 does.
+_TURB_FREQ = (1.0, 2.17, 4.63)
+_TURB_AMP = (0.6, 0.3, 0.1)
+# Rows are the direction each component samples along; columns are x, y, z.
+_TURB_DIRS = np.array([
+    [1.0, 0.7, -1.3],
+    [-0.9, 1.1, 0.6],
+    [0.5, -1.4, 1.0],
+])
+_TURB_PHASE = np.array([0.0, 2.399, 4.812])
 
 
-def field_accel(points: np.ndarray, fields) -> np.ndarray:
+def turbulence(points: np.ndarray, t: float, size: float, flow: float,
+               seed: float) -> np.ndarray:
+    """A smooth, swirling vector field. (N, 3), each component in [-1, 1].
+
+    Sines, not Perlin, and that is a parity decision rather than laziness.
+    Lattice noise has to floor a coordinate to an integer, and float32 on the
+    card floors a value a hair either side of a lattice line differently from
+    float64 in this oracle. That is a whole cell of difference in the output
+    against a tolerance of 2e-5, so it would fail at random - the same reason
+    the fiber wave uses sines and not a hash.
+
+    The cost is honesty about what this is: it reads as turbulence and it
+    answers to Blender's Strength, Size, Flow and Seed, but it is not
+    Blender's own Perlin turbulence and will not match a particle sim
+    driven by the same field object.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    scale = 1.0 / max(abs(size), 1e-4)
+    out = np.zeros_like(points)
+    for freq, amp in zip(_TURB_FREQ, _TURB_AMP):
+        # The seed only shifts phase, so two turbulence fields at the same
+        # place with different seeds do not move material identically.
+        phase = _TURB_PHASE + seed * 1.618 + t * flow * freq
+        arg = (points * scale * freq) @ _TURB_DIRS.T + phase
+        out += amp * np.sin(arg)
+    return out
+
+
+
+
+def field_accel(points: np.ndarray, fields, t: float = 0.0) -> np.ndarray:
     """Acceleration each field contributes at every point, summed. (N, 3).
 
     Mirrored exactly in kernels.PREDICT_SRC - test_fields_vs_oracle is what
     notices if the two drift.
 
-    A field row is (kind, origin xyz, axis xyz, strength, power, max_dist).
-    The axis is the field object local +Z in world space, which is what
-    Blender points a Wind or a Vortex along.
+    A field row is (kind, origin xyz, axis xyz, strength, power, max_dist,
+    size, flow, seed). The axis is the field object local +Z in world space,
+    which is what Blender points a Wind or a Vortex along; the last three
+    are Turbulence only.
     """
     points = np.asarray(points, dtype=np.float64)
     out = np.zeros_like(points)
@@ -89,6 +135,9 @@ def field_accel(points: np.ndarray, fields) -> np.ndarray:
         origin = np.asarray(row[1:4], dtype=np.float64)
         axis = np.asarray(row[4:7], dtype=np.float64)
         strength, power, max_dist = float(row[7]), float(row[8]), float(row[9])
+        size = float(row[10]) if len(row) > 10 else 1.0
+        flow = float(row[11]) if len(row) > 11 else 0.0
+        seed = float(row[12]) if len(row) > 12 else 0.0
 
         rel = points - origin
         r = np.linalg.norm(rel, axis=1)
@@ -107,6 +156,12 @@ def field_accel(points: np.ndarray, fields) -> np.ndarray:
             tl = np.linalg.norm(tangent, axis=1)
             safe = live & (tl > 1e-6)
             out[safe] += (strength * falloff[safe])[:, None] * (tangent[safe] / tl[safe, None])
+        elif kind == FIELD_TURBULENCE:
+            # Sampled at the world position, not at the offset from the
+            # field: a turbulence field is a property of the space, and
+            # moving the empty should not drag the whole pattern with it.
+            noise = turbulence(points, t, size, flow, seed)
+            out[live] += (strength * falloff[live])[:, None] * noise[live]
     return out
 
 
@@ -153,7 +208,7 @@ def step(state: SolverState, tets, dm_inv, rest_vol, params: SolverParams,
         state.predicted[:] = state.nodes
         state.predicted[movable] += (
             state.velocities[movable] * h
-            + (gravity + field_accel(state.nodes, fields)[movable]) * (h * h)
+            + (gravity + field_accel(state.nodes, fields, t)[movable]) * (h * h)
         )
 
         solve_constraints(

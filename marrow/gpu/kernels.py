@@ -82,13 +82,38 @@ PREDICT_SRC = """
 //
 // Transcribed from solver_ref.field_accel. The two must stay in step -
 // test_fields_vs_oracle is what notices if they do not.
+// Three octaves of sine read through oblique directions. Not Perlin, and
+// deliberately: lattice noise floors a coordinate to an integer, and float32
+// here floors a value a hair either side of a lattice line differently from
+// the float64 oracle. That is a whole cell of difference against a 2e-5
+// tolerance - the same reason the fiber wobble is sines and not a hash.
+vec3 turbulence(vec3 p, float t, float size, float flow, float seed)
+{
+  const vec3 dx = vec3(1.0, 0.7, -1.3);
+  const vec3 dy = vec3(-0.9, 1.1, 0.6);
+  const vec3 dz = vec3(0.5, -1.4, 1.0);
+  const vec3 base = vec3(0.0, 2.399, 4.812);
+
+  float scale = 1.0 / max(abs(size), 1e-4);
+  vec3 a = vec3(0.0);
+  float freqs[3] = float[3](1.0, 2.17, 4.63);
+  float amps[3] = float[3](0.6, 0.3, 0.1);
+  for (int o = 0; o < 3; ++o) {
+    vec3 q = p * scale * freqs[o];
+    vec3 phase = base + seed * 1.618 + t * flow * freqs[o];
+    a += amps[o] * sin(vec3(dot(q, dx), dot(q, dy), dot(q, dz)) + phase);
+  }
+  return a;
+}
+
 vec3 field_accel(vec3 pos)
 {
   vec3 a = vec3(0.0);
   for (int f = 0; f < n_fields; ++f) {
-    vec4 o = imageLoad(fields, texel(3 * f));
-    vec4 d = imageLoad(fields, texel(3 * f + 1));
-    vec4 e = imageLoad(fields, texel(3 * f + 2));
+    vec4 o = imageLoad(fields, texel(4 * f));
+    vec4 d = imageLoad(fields, texel(4 * f + 1));
+    vec4 e = imageLoad(fields, texel(4 * f + 2));
+    vec4 g = imageLoad(fields, texel(4 * f + 3));
     int kind = int(o.w);
     float strength = d.w;
     float power = e.x;
@@ -107,6 +132,10 @@ vec3 field_accel(vec3 pos)
       vec3 t = cross(d.xyz, rel);
       float tl = length(t);
       if (tl > 1e-6) { a += strength * falloff * (t / tl); }
+    } else if (kind == 4) {                // Turbulence
+      // Sampled at the world position rather than the offset from the
+      // field, so moving the empty does not drag the pattern with it.
+      a += strength * falloff * turbulence(pos, field_time, g.x, g.y, g.z);
     }
   }
   return a;
@@ -145,6 +174,7 @@ PREDICT_PUSH = [
     ("VEC3", "gravity"),
     ("INT", "n_nodes"),
     ("INT", "n_fields"),
+    ("FLOAT", "field_time"),
 ]
 
 
