@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Marrow is a GPU tetrahedral soft body for Blender 5.2: a stable neo-Hookean XPBD system in GLSL compute shaders, with no compiled extension and no external dependency.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🪼</text></svg>">
+<title>Marrow Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+/* ---------------------------------------------------------------
+   Marrow Handbook
+   Palette is taken from the addon's own false-colour stretch ramp:
+   cold teal where material is compressed, hot ember where it is
+   pulled past rest. Teal is the accent; ember is reserved for the
+   things that can actually ruin a shot.
+   --------------------------------------------------------------- */
+
+:root {
+  --bg:        #E9EDEC;
+  --surface:   #F6F8F7;
+  --surface-2: #DFE5E4;
+  --ink:       #101719;
+  --ink-2:     #4C5A5D;
+  --ink-3:     #748285;
+  --rule:      #CDD6D4;
+  --rule-soft: #DCE3E1;
+  --accent:    #0E6E76;
+  --accent-2:  #0A555C;
+  --accent-wash:#DCEBEB;
+  --hot:       #B23A15;
+  --hot-wash:  #F6E3DA;
+  --code-bg:   #E2E8E6;
+  --shadow:    0 1px 2px rgba(16,23,25,.06), 0 8px 24px -16px rgba(16,23,25,.28);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0B1012;
+    --surface:   #121A1C;
+    --surface-2: #182225;
+    --ink:       #DEE6E4;
+    --ink-2:     #9AA9AA;
+    --ink-3:     #748285;
+    --rule:      #232F32;
+    --rule-soft: #1B2528;
+    --accent:    #52C2C6;
+    --accent-2:  #7FD6D8;
+    --accent-wash:#12292C;
+    --hot:       #EE7A50;
+    --hot-wash:  #2C1710;
+    --code-bg:   #0E1618;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:        #0B1012;
+  --surface:   #121A1C;
+  --surface-2: #182225;
+  --ink:       #DEE6E4;
+  --ink-2:     #9AA9AA;
+  --ink-3:     #748285;
+  --rule:      #232F32;
+  --rule-soft: #1B2528;
+  --accent:    #52C2C6;
+  --accent-2:  #7FD6D8;
+  --accent-wash:#12292C;
+  --hot:       #EE7A50;
+  --hot-wash:  #2C1710;
+  --code-bg:   #0E1618;
+  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- shell ---------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 272px minmax(0, 1fr);
+  align-items: start;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+/* ---- sidebar -------------------------------------------------- */
+
+.rail {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 26px 20px 26px 28px;
+  border-right: 1px solid var(--rule);
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.brand-mark {
+  font-family: "Archivo", sans-serif;
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.brand-ver {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-radius: 3px;
+  padding: 2px 6px;
+  letter-spacing: .02em;
+}
+
+.filter {
+  position: relative;
+}
+
+.filter input {
+  width: 100%;
+  font: 400 13px/1.4 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 8px 10px 8px 28px;
+}
+
+.filter input::placeholder { color: var(--ink-3); }
+
+.filter input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.filter svg {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  stroke: var(--ink-3);
+  fill: none;
+  stroke-width: 1.8;
+  pointer-events: none;
+}
+
+.nav {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex: 1;
+  margin-right: -8px;
+  padding-right: 8px;
+}
+
+.nav-group + .nav-group { margin-top: 20px; }
+
+.nav-group > h4 {
+  margin: 0 0 6px;
+  font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.nav a {
+  display: block;
+  padding: 4px 10px;
+  margin-left: -10px;
+  border-radius: 4px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13.5px;
+  line-height: 1.45;
+  border-left: 2px solid transparent;
+}
+
+.nav a:hover { color: var(--ink); background: var(--surface); }
+
+.nav a.on {
+  color: var(--accent);
+  font-weight: 600;
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
+}
+
+.nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.rail-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+  font: 400 11.5px/1.4 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink-3);
+}
+
+.rail-foot a { color: var(--ink-3); }
+
+.theme-btn {
+  font: inherit;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.theme-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+.theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- main ----------------------------------------------------- */
+
+main {
+  min-width: 0;
+  padding: 0 clamp(20px, 4vw, 64px) 140px;
+}
+
+.masthead {
+  padding: 56px 0 40px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 8px;
+}
+
+.eyebrow {
+  font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 16px;
+}
+
+h1 {
+  font-family: "Archivo", sans-serif;
+  font-weight: 700;
+  font-size: clamp(38px, 5.4vw, 58px);
+  line-height: 1.02;
+  letter-spacing: -.033em;
+  margin: 0 0 18px;
+  text-wrap: balance;
+  max-width: 16ch;
+}
+
+.standfirst {
+  font-size: 18.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 62ch;
+  margin: 0;
+}
+
+.standfirst strong { color: var(--ink); font-weight: 600; }
+
+#lattice {
+  display: block;
+  width: 100%;
+  height: 168px;
+  margin: 34px 0 26px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.lattice-cap {
+  font: 400 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink-3);
+  margin: -14px 0 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 30px;
+}
+
+.fact {
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+.fact dt {
+  font: 500 10px/1 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 7px;
+}
+
+.fact dd {
+  margin: 0;
+  font-family: "Archivo", sans-serif;
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- sections ------------------------------------------------- */
+
+section { scroll-margin-top: 20px; }
+
+section > * { max-width: 74ch; }
+
+h2 {
+  font-family: "Archivo", sans-serif;
+  font-weight: 700;
+  font-size: 29px;
+  letter-spacing: -.021em;
+  line-height: 1.15;
+  margin: 68px 0 4px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule-soft);
+  max-width: none;
+  text-wrap: balance;
+}
+
+h2:first-of-type { border-top: 0; }
+
+h3 {
+  font-family: "Archivo", sans-serif;
+  font-weight: 600;
+  font-size: 19.5px;
+  letter-spacing: -.012em;
+  margin: 40px 0 2px;
+  text-wrap: balance;
+}
+
+h4 {
+  font: 600 12px/1 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin: 32px 0 -2px;
+}
+
+p { margin: 14px 0; max-width: 70ch; }
+
+a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+a:hover { color: var(--accent-2); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+strong { font-weight: 600; color: var(--ink); }
+
+ul, ol { margin: 14px 0; padding-left: 22px; max-width: 70ch; }
+li { margin: 7px 0; }
+li::marker { color: var(--ink-3); }
+
+code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .88em;
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 18px 0;
+  max-width: 74ch;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+pre .c { color: var(--ink-3); }
+
+/* ---- tables --------------------------------------------------- */
+
+.tw {
+  overflow-x: auto;
+  margin: 20px 0;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+  max-width: none;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+th, td {
+  text-align: left;
+  padding: 9px 15px;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+
+thead th {
+  font: 600 10.5px/1.3 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+tbody tr:last-child td { border-bottom: 0; }
+
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+table.num tbody td:not(:first-child) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+td strong { white-space: nowrap; }
+
+.setting td:first-child {
+  white-space: nowrap;
+  font-weight: 600;
+  width: 1%;
+}
+
+/* ---- measured block ------------------------------------------- */
+/* Every number in this project came off a card or an oracle. The
+   block says which, because that is the actual through-line of the
+   documentation and not a decoration. */
+
+.measured {
+  margin: 26px 0;
+  max-width: none;
+}
+
+.measured > figcaption {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font: 400 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+
+.measured > figcaption b {
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  font-size: 10px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent);
+  padding-bottom: 1px;
+  flex: none;
+}
+
+.measured .tw { margin: 0; }
+
+/* ---- callouts ------------------------------------------------- */
+
+.note, .warn {
+  margin: 24px 0;
+  padding: 14px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  max-width: 72ch;
+}
+
+.warn {
+  border-color: var(--hot);
+  background: var(--hot-wash);
+}
+
+.note > .lab, .warn > .lab {
+  display: block;
+  font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  color: var(--ink-3);
+}
+
+.warn > .lab { color: var(--hot); }
+
+.note p:first-of-type, .warn p:first-of-type { margin-top: 0; }
+.note p:last-child, .warn p:last-child { margin-bottom: 0; }
+
+/* ---- misc ----------------------------------------------------- */
+
+.lede {
+  font-size: 17px;
+  color: var(--ink-2);
+  max-width: 66ch;
+  margin: 14px 0 4px;
+}
+
+.steps {
+  counter-reset: s;
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 70ch;
+}
+
+.steps li {
+  counter-increment: s;
+  position: relative;
+  padding-left: 38px;
+  margin: 0;
+}
+
+.steps li::before {
+  content: counter(s);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  font: 600 12px/1 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--accent);
+}
+
+.limits {
+  list-style: none;
+  padding: 0;
+  max-width: 72ch;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.limits li {
+  margin: 0;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+
+.limits li:last-child { border-bottom: 0; }
+
+footer {
+  margin-top: 80px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  font: 400 13px/1.7 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink-3);
+  max-width: none;
+}
+
+/* ---- mobile --------------------------------------------------- */
+
+.railtoggle {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 11px clamp(20px, 4vw, 64px);
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  font: 500 13px/1 "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .railtoggle { display: flex; }
+  .rail {
+    position: static;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 20px clamp(20px, 4vw, 64px) 24px;
+  }
+  .rail[hidden] { display: none; }
+  .nav { overflow: visible; max-height: none; }
+  .masthead { padding-top: 34px; }
+  main { padding-bottom: 90px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+</style>
+</head>
+<body>
+<button class="railtoggle" id="railtoggle" aria-expanded="false" aria-controls="rail">
+  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+  Contents
+</button>
+
+<div class="shell">
+
+  <aside class="rail" id="rail">
+    <a class="brand" href="#top">
+      <span class="brand-mark">Marrow</span>
+      <span class="brand-ver">2.5.0</span>
+    </a>
+
+    <div class="filter">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="q" type="search" placeholder="Filter sections" aria-label="Filter sections">
+    </div>
+
+    <nav class="nav" id="nav" aria-label="Documentation">
+      <div class="nav-group">
+        <h4>Start</h4>
+        <a href="#what">What Marrow is</a>
+        <a href="#install">Install</a>
+        <a href="#quickstart">Quick start</a>
+        <a href="#undo">Getting your object back</a>
+      </div>
+      <div class="nav-group">
+        <h4>The cage</h4>
+        <a href="#coverage">Cage coverage</a>
+        <a href="#liveorbake">Live or Bake</a>
+        <a href="#diskcache">Baked caches on disk</a>
+      </div>
+      <div class="nav-group">
+        <h4>Reference</h4>
+        <a href="#settings">Every setting</a>
+        <a href="#mass">Mass and density</a>
+      </div>
+      <div class="nav-group">
+        <h4>Contact</h4>
+        <a href="#colliders">Colliders</a>
+        <a href="#friction">Friction</a>
+        <a href="#sticky">Sticky colliders</a>
+        <a href="#selfcollision">Self collision</a>
+        <a href="#twobodies">Colliding two bodies</a>
+        <a href="#ground">Ground plane</a>
+      </div>
+      <div class="nav-group">
+        <h4>Material</h4>
+        <a href="#failure">Failure</a>
+        <a href="#regions">Per-region stiffness</a>
+      </div>
+      <div class="nav-group">
+        <h4>Motion</h4>
+        <a href="#fiber">Fiber</a>
+        <a href="#bending">Bending</a>
+        <a href="#fields">Gravity and force fields</a>
+      </div>
+      <div class="nav-group">
+        <h4>Rigging</h4>
+        <a href="#attachment">Attachment</a>
+        <a href="#pinning">Pinning</a>
+      </div>
+      <div class="nav-group">
+        <h4>Display</h4>
+        <a href="#falsecolor">False color</a>
+      </div>
+      <div class="nav-group">
+        <h4>Internals</h4>
+        <a href="#howitworks">How it works</a>
+        <a href="#longruns">Long runs</a>
+        <a href="#gpu">A note on GPU reliability</a>
+      </div>
+      <div class="nav-group">
+        <h4>Appendix</h4>
+        <a href="#limitations">Limitations</a>
+        <a href="#development">Development</a>
+        <a href="#licence">Licence</a>
+      </div>
+    </nav>
+
+    <div class="rail-foot">
+      <span>GPL-3.0-or-later</span>
+      <button class="theme-btn" id="theme" type="button">Theme</button>
+    </div>
+  </aside>
+
+  <main id="top">
+
+    <header class="masthead">
+      <p class="eyebrow">Blender 5.2 extension</p>
+      <h1>GPU tetrahedral soft body</h1>
+      <p class="standfirst">Marrow fills a mesh with a tetrahedral cage, solves a <strong>stable neo-Hookean XPBD</strong> system in GLSL compute shaders, and deforms the original render mesh by barycentric interpolation from that cage. Pure Python against Blender's bundled interpreter: no compiled extension, no external dependency, no per-platform build.</p>
+
+      <canvas id="lattice" aria-label="A tetrahedral cage running a travelling fiber contraction, shaded by stretch"></canvas>
+      <p class="lattice-cap">Fiber wave on a cage, shaded the way False Color shades it — cold where compressed, hot where pulled past rest.</p>
+
+      <dl class="facts">
+        <div class="fact"><dt>Live frame</dt><dd>1&ndash;2 ms</dd></div>
+        <div class="fact"><dt>Cage nodes</dt><dd>125 &ndash; 2,744</dd></div>
+        <div class="fact"><dt>Solve kernels</dt><dd>6 GLSL</dd></div>
+        <div class="fact"><dt>Test oracle</dt><dd>numpy, 2e-5</dd></div>
+      </dl>
+    </header>
+
+    <section id="what">
+      <h2>What Marrow is</h2>
+      <p>Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric soft body; the legacy <code>SOFT_BODY</code> modifier is a surface spring lattice with no volume preservation. Marrow fills that gap.</p>
+      <p>It never modifies your topology. The cage is a separate hidden object, and the render mesh is deformed by interpolation from it — so UVs, shape keys and material slots come through untouched, and <strong>De-tetrahedralize</strong> gives you back the mesh you modelled, bit for bit.</p>
+    </section>
+
+    <section id="install">
+      <h2>Install</h2>
+      <pre><code>blender --command extension install-file -r user_default --enable dist/marrow-2.5.0.zip</code></pre>
+      <p>Or in Blender: <strong>Edit &gt; Preferences &gt; Get Extensions &gt; Install from Disk</strong>.</p>
+      <h4>Building from source</h4>
+      <pre><code>blender --command extension build --source-dir marrow --output-dir dist</code></pre>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quick start</h2>
+      <ol class="steps">
+        <li>Select a mesh. Open the <strong>Marrow</strong> tab in the 3D viewport sidebar (<code>N</code>).</li>
+        <li>Set <strong>Resolution</strong> and press <strong>Tetrahedralize</strong>. A hidden wire cage is created and parented to your object.</li>
+        <li>Optionally add something to collide against: select it, then the soft body, and under <strong>Simulation &gt; Colliders</strong> press <strong>+</strong>. Toggle the magnet on its row to make it <a href="#sticky">sticky</a>, so material it touches is dragged along with it rather than only pushed away.</li>
+        <li>Press play.</li>
+      </ol>
+      <p>That is the whole loop. <strong>Live is on by default</strong>: each frame is simulated as the timeline reaches it and cached, so scrubbing back is free and a second pass costs nothing.</p>
+      <p>To change how it behaves, edit any slider and <strong>return to the start frame</strong>. That restarts the simulation with the new settings, with no freeing and no rebaking. Measured on an RTX 5050, a live frame costs 1 to 2 ms from a 125-node cage up to a 2,744-node one, so the edit loop stays interactive.</p>
+    </section>
+
+    <section id="undo">
+      <h2>Getting your object back</h2>
+      <p><strong>De-tetrahedralize</strong>, in the Cage box, restores the shape you modelled, deletes the cage, strips every attribute Marrow wrote and releases the session. The mesh comes back bit-identical.</p>
+      <p>It works because Tetrahedralize records the rest shape in a <code>marrow_rest</code> attribute first. That also means re-tetrahedralizing after playing the timeline rebuilds from the original shape rather than from the deformed pose, so changing Resolution mid-project is safe.</p>
+      <div class="note">
+        <span class="lab">Not the same thing</span>
+        <p><strong>Free Bake is not De-tetrahedralize.</strong> Free Bake discards the cache and the GPU memory and leaves the object tetrahedralised and deformed, ready to simulate again.</p>
+      </div>
+      <p>Editing the mesh's topology between the two invalidates the stored shape, since the attribute is per-point. Re-tetrahedralize after any Edit Mode change.</p>
+    </section>
+
+    <section id="coverage">
+      <h2>Cage coverage</h2>
+      <p>The cage keeps a cell when its <strong>centre</strong> is inside the mesh — and that alone loses anything thinner than a cell. A tentacle tip, a fingertip, a horn: no cell centre ever lands inside one, so the cage stops short. Those render vertices get no tet of their own; binding clips them onto whichever tet was nearest and they ride it, which is what stretches a tip into a spike or collapses it to a point.</p>
+      <p>So cells holding a <strong>mesh vertex</strong> are kept too, whether or not their centre is inside. That covers a thin feature exactly where the mesh carries the detail to describe it, and it costs one pass over vertices the voxeliser has already loaded — no extra ray casts, no change in Resolution.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>Tet count, and the share of render vertices left outside the cage.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Shape</th><th class="n">Resolution</th><th class="n">Tets before</th><th class="n">Tets after</th><th class="n">Cost</th><th class="n">Outside before</th><th class="n">Outside after</th></tr></thead>
+            <tbody>
+              <tr><td>Cube</td><td class="n">0.25</td><td class="n">2,560</td><td class="n">2,560</td><td class="n">0%</td><td class="n">0%</td><td class="n">0%</td></tr>
+              <tr><td>UV sphere</td><td class="n">0.15</td><td class="n">6,220</td><td class="n">7,755</td><td class="n">+25%</td><td class="n">50%</td><td class="n">0%</td></tr>
+              <tr><td>Suzanne</td><td class="n">0.12</td><td class="n">6,235</td><td class="n">7,160</td><td class="n">+15%</td><td class="n">60%</td><td class="n">0%</td></tr>
+              <tr><td>Tapered tentacle</td><td class="n">0.05</td><td class="n">7,655</td><td class="n">9,880</td><td class="n">+29%</td><td class="n">58%</td><td class="n">0%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>A cube pays nothing — its cells already cover it. Curved and thin shapes pay 15&ndash;30% more tets and go from half their render vertices being dragged to none of them. Reaching the same coverage on that tentacle by Resolution alone took 0.02 and 121k tets, sixteen times the cage for the same result.</p>
+      <p>This is not only a thin-feature fix. Half the surface vertices of any curved mesh used to sit outside the cage and be clipped onto it rather than interpolated inside it.</p>
+
+      <h3>The Adaptive cage is gone</h3>
+      <p>This replaced an <strong>Adaptive</strong> octree cage that used to live in the Cage box. Its job was to spend fine cells only where a shape is thin, and vertex cells do that job for nothing — so it was measured against the uniform fill it was built to beat and lost on every axis. On a solid sphere at its own best settings it wanted 31,726 nodes against 23,871 for a uniform cage at the same surface size, took 5&times; as long to build, and left 49% of render vertices outside the cage because the octree never got vertex cells of its own. It is gone, along with the hanging-node blend pass that existed only to hold its cages together.</p>
+      <div class="warn">
+        <span class="lab">Refused, not silently simulated</span>
+        <p>A .blend saved with an adaptive cage is <strong>refused with a message asking for a rebuild</strong> rather than simulated without that glue, which would quietly tear the cage apart. Existing cages keep the old behaviour until you Tetrahedralize again.</p>
+      </div>
+    </section>
+
+    <section id="liveorbake">
+      <h2>Live or Bake</h2>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Live</strong> (default)</td><td>Simulates as you play, caching as it goes. Returning to the start frame restarts and re-reads the sliders. Scrubbing <em>below</em> the start frame resets the body to rest.</td></tr>
+            <tr><td><strong>Bake</strong></td><td>Simulates the whole scene range up front. The result is then fixed: replaying it, including from the start frame or below it, never re-simulates, so it survives slider changes until you free it.</td></tr>
+            <tr><td><strong>Free</strong></td><td>Discards the cache and releases GPU memory.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Moving the playhead <strong>before the start frame</strong> resets a live body: the cache is dropped, the mesh snaps back to its rest shape and False Color repaints at rest. Paused or playing makes no difference. A baked body is exempt and keeps replaying its cache.</p>
+      <p>Turning <strong>Live</strong> off stops simulation entirely for that object.</p>
+      <p>A skip of up to 8 frames is caught up, so playback that drops frames does not stall. A larger jump plays whatever is cached and otherwise leaves the mesh where it is, because chasing hundreds of frames inside a frame handler would lock the UI. A body that has never simulated is the exception: with no history to protect, the first jump catches up from the start frame in one go, so pressing play mid-timeline just works.</p>
+    </section>
+
+    <section id="diskcache">
+      <h2>Baked caches on disk</h2>
+      <p>A bake survives closing the file. It is written to a <code>blendcache_&lt;name&gt;</code> folder beside the .blend when you save — the same convention Blender's own point caches use, and for the same reason: a bake of a real body is hundreds of megabytes of float, and putting that inside the .blend would make every save carry it.</p>
+      <p>Only the cage node positions are stored. Render positions are barycentric combinations of them and rebuild exactly on load — measured at 1.4e-7 against what the skin kernel produced — so storing both would be storing the same thing twice. On a body with more render vertices than cage nodes, which is the usual shape of things, that is the smaller half.</p>
+      <p><strong>Only bakes are written.</strong> A live cache is disposable by design and is rebuilt as the timeline plays, so writing it on every save would be pure cost.</p>
+      <p>Reopening validates before trusting: the stored vertex count, tet count and node count all have to match the cage that exists now. Editing the mesh or re-tetrahedralizing leaves a cache that would unpack into the wrong shapes, and playing that back would look like a solver fault rather than a stale file, so it is refused and the body comes back unbaked.</p>
+      <p><strong>Free</strong> deletes the sidecar along with the in-memory cache, and so does De-tetrahedralize. Leaving the file behind would have the next session load back the bake you just discarded. An unsaved .blend has nowhere to put one, so nothing is written until the file has a path.</p>
+    </section>
+
+    <section id="settings">
+      <h2>Every setting</h2>
+      <p class="lede">The full panel, in panel order.</p>
+      <div class="tw">
+        <table class="setting">
+          <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td>Resolution</td><td>Cage cell size in world units. Smaller fills finer detail and costs more. See <a href="#coverage">Cage coverage</a>.</td></tr>
+            <tr><td>Substeps</td><td>XPBD substeps per frame. More is stabler and slower, and this is the most expensive knob here.</td></tr>
+            <tr><td>Stiffness</td><td>Resistance to distortion (deviatoric compliance).</td></tr>
+            <tr><td>Volume Preservation</td><td>Resistance to volume change (hydrostatic compliance).</td></tr>
+            <tr><td>Stiffness Group</td><td>Vertex group saying where the body is stiff. Scales both sliders above, per tet. See <a href="#regions">Per-region stiffness</a>.</td></tr>
+            <tr><td>Softest</td><td>Stiffness multiplier where that group's weight is 0.</td></tr>
+            <tr><td>Damping</td><td>Velocity retained each substep. 1.0 is undamped.</td></tr>
+            <tr><td>Gravity</td><td>Multiplies the scene gravity for this body alone. 0 is weightless, negative falls upwards.</td></tr>
+            <tr><td>Force Fields</td><td>Collection of Force, Wind, Vortex and Turbulence fields that push this body. See <a href="#fields">Force fields</a>.</td></tr>
+            <tr><td>Fiber</td><td>Contract along baked fiber directions. See <a href="#fiber">Fiber</a>.</td></tr>
+            <tr><td>Curve</td><td>Curve running along the body. Its tangent is the fiber direction, its arclength the wave phase.</td></tr>
+            <tr><td>Fiber Stiffness</td><td>Resistance to stretch along the fiber, and how hard it pulls.</td></tr>
+            <tr><td>Bend</td><td>How much the wave bends the body rather than only squeezing it. 0 is a pure travelling squeeze. See <a href="#bending">Bending</a>.</td></tr>
+            <tr><td>Amplitude</td><td>Peak contraction. 0.3 shortens to 70% of rest length.</td></tr>
+            <tr><td>Wavelength</td><td>Distance between crests, along the curve. Floored at 1e-4 — both the oracle and the kernel divide by it unguarded, so this is not a soft suggestion.</td></tr>
+            <tr><td>Speed</td><td>Cycles per second. Travel velocity is Wavelength &times; Speed.</td></tr>
+            <tr><td>Waveform</td><td>Smooth cosine, or hard on/off square.</td></tr>
+            <tr><td>Noise</td><td>Irregularity, 0&ndash;1. Jitters when each crest arrives and how hard it bites. 0 is the exact clockwork wave.</td></tr>
+            <tr><td>Friction</td><td>Resistance to sliding, for the ground plane, self-collision and body-to-body contact. 0 slides freely. Colliders carry their own value instead. See <a href="#friction">Friction</a>.</td></tr>
+            <tr><td>Ground Plane / Height</td><td>An infinite horizontal plane the body cannot fall through.</td></tr>
+            <tr><td>Failure / Fail Strain</td><td>Largest stretch a tet survives, in any direction. 1.5 fails at 1.5&times; rest length. See <a href="#failure">Failure</a>.</td></tr>
+            <tr><td>Self Collision</td><td>Stop the body passing through itself where it folds.</td></tr>
+            <tr><td>Collide With Bodies</td><td>Collide with other Marrow objects that also have it on. Both deform.</td></tr>
+            <tr><td>Thickness</td><td>Contact gap for both of the above, as a multiple of Resolution.</td></tr>
+            <tr><td>Attachment</td><td>An armature or other deforming modifiers drive the sim from the inside. See <a href="#attachment">Attachment</a>.</td></tr>
+            <tr><td>Attach Stiffness</td><td>How hard the flesh follows the animation. 1.0 rides it exactly; lower lags, jiggles and overshoots.</td></tr>
+            <tr><td>Pin Group</td><td>Vertex group whose weight holds material in place. 1.0 pins solid; below that is a heavier node, not a partial hold. See <a href="#pinning">Pinning</a>.</td></tr>
+            <tr><td>Follows Animation</td><td>Let the pinned region ride the animation instead of staying put. Still rigid. Needs Attachment.</td></tr>
+            <tr><td>Colliders</td><td>The collection of objects this body collides against. Shape, Sticky and Friction are set on each object.</td></tr>
+            <tr><td>Stick Break</td><td>How far material may drag a sticky contact before it lets go. 0 never lets go.</td></tr>
+            <tr><td>False Color</td><td>Off / Stretch rainbow display of how far the material is stretched. See <a href="#falsecolor">False color</a>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="mass">
+      <h2>Mass and density</h2>
+      <p><strong>Mass is a property of the object, not of the cage.</strong> Each node carries the volume of material it represents at a fixed density (64 mass units per cubic metre), so an object weighs the same however finely it is tetrahedralized, and Stiffness and Volume Preservation keep their meaning across a Resolution change.</p>
+      <p>The density is chosen so the average node at the default Resolution of 0.25 weighs the 1 mass unit older versions gave every node. A very fine cage can still read a touch firmer at the same Substeps — a fixed iteration budget converges more constraints less — so raise Substeps if a resolution change needs to match to the last percent.</p>
+    </section>
+
+    <section id="colliders">
+      <h2>Colliders</h2>
+      <p>Each collider carries its own <strong>Shape</strong>. <strong>Mesh</strong> is the default and uses the object's actual shape, so anything works — a bowl, a hand, a floor with a lip. <strong>Sphere</strong> and <strong>Box</strong> are cheaper and exactly round or square, for when the shape really is one.</p>
+      <p>A mesh collider is baked once into a signed distance field, in the object's own local space. That means moving, rotating and scaling it costs nothing — the field rides the transform exactly as the primitives do. It also means concavity works properly: a node in the hole of a torus is correctly outside the solid, which a bounding box or a convex hull would get wrong.</p>
+      <p>The field's grid tracks your <strong>Resolution</strong>, since it only needs to resolve detail the cage can represent. There is no separate setting.</p>
+      <div class="warn">
+        <span class="lab">Baked once</span>
+        <p><strong>A deforming collider is not re-baked.</strong> Shape keys, an armature or Geometry Nodes on the collider are captured once when the simulation starts and never revisited. Transform animation is free; deformation is not.</p>
+      </div>
+
+      <h3>Collections, not lists</h3>
+      <p>Colliders come from a <strong>collection</strong>. The body points at one, and every object in it is a collider — nested collections included, so you can group them however the shot wants.</p>
+      <p>The quickest way in: select the objects you want to collide against, then the soft body last so it is active, and press <strong>+</strong> in <strong>Simulation &gt; Colliders</strong>. Marrow makes a <code>&lt;body&gt; Colliders</code> collection if there is none yet, and links them in. <strong>&minus;</strong> unlinks the highlighted row. You can also just point the field at a collection you already have, and drag objects in and out of it in the outliner.</p>
+      <p>Because the settings live on the collider and not on the body, an object dropped into two bodies' collections is described once. Change its Shape and both bodies follow.</p>
+      <p>The shape is a unit primitive driven entirely by the picked object's transform, so a default Blender sphere or cube maps exactly, and position, rotation and scale all animate. An <strong>Empty works just as well as a mesh</strong>, and is often tidier: a primitive collider needs a transform and nothing else.</p>
+      <p>Collider transforms are re-sampled every frame in both live and baked modes, so a falling ball genuinely lands on a jelly rather than sitting still. An empty collection, or a body sitting in its own collider collection, is skipped rather than treated as an error. Both are just a half-finished edit.</p>
+    </section>
+
+    <section id="friction">
+      <h2>Friction</h2>
+      <p>Contact resists sliding, not just interpenetration. <strong>Friction</strong> is one coefficient per contact surface: <code>0</code> slides freely, around <code>0.5</code> grips on a gentle slope, <code>1</code> and above holds almost anywhere it can get a grip.</p>
+      <p>There are two places to set it, and which one applies depends on what the material is touching. Each collider in the list carries its <strong>own</strong> Friction, set on the collider object beside its Shape and Sticky — so a slippery floor and a grippy hand can be in the same scene. Everything with no collider slot of its own — the ground plane, the body against itself, and contact with other Marrow bodies — reads the body's <strong>Friction</strong> slider instead.</p>
+      <p>One coefficient covers both static and sliding friction. Below the limit the entire sideways step is given back and the material simply holds; above it the contact slips, at a rate the coefficient sets. The limit scales with how hard the contact is pressed, which is what makes it read as weight: the same slider grips harder under a heavy landing than a light touch.</p>
+      <p>Friction is applied as a position correction inside the contact pass, from the correction that pass already computed — so it needs no separate normal, and no second pass. Both the ground plane and the collider primitives measure it against a collider held still for the substep. Self-collision and body-to-body measure the <em>pair</em>, so two parts of one body travelling together are not braked for merely touching.</p>
+      <p><code>0</code> is the default everywhere and is bit-identical to having no friction at all, so nothing that was authored before this existed moves differently.</p>
+      <div class="note">
+        <span class="lab">Different things</span>
+        <p><strong>Sticky is not friction.</strong> Friction resists sliding along a surface; Sticky welds material to it and drags it wherever the collider goes. A sticky collider ignores Friction entirely, and the panel greys the value out to say so.</p>
+      </div>
+    </section>
+
+    <section id="sticky">
+      <h2>Sticky colliders</h2>
+      <p>The magnet toggle on a collider makes it <strong>sticky</strong>. Material that touches it is held to the surface and dragged along as the collider moves, instead of only being pushed out of it.</p>
+      <p>Plain non-penetration can only push, so a collider that lifts away leaves the body behind. Sticky is what makes squash-and-stretch possible: press a plate into a blob, lift it, and the material is drawn up into a column. The contact point is recorded in the collider's own local space, so the anchor rides the animated transform for free and rotation and scale come along with it.</p>
+      <p><strong>Stick Break</strong> is how far the material may drag a contact point before it lets go, in world units. Zero never lets go. There is no universal value: the distance a contact settles at depends on Stiffness and Substeps, so tune it against the shot.</p>
+      <div class="warn">
+        <span class="lab">Do not start overlapping a sticky collider</span>
+        <p>Every buried node is grabbed on the first frame and welded to whichever face happened to be nearest. They scatter across different faces and turn the body inside out. Measured on a sphere half-buried in a sticky box: <strong>219 of 461 nodes seized immediately</strong>, 12% of tets inverted, render mesh shredded.</p>
+        <p>Move the collider clear at the start frame, or leave Sticky off. A collider that presses in <em>during</em> the simulation is fine, and is the intended way to set a stretch shot up.</p>
+      </div>
+    </section>
+
+    <section id="selfcollision">
+      <h2>Self collision</h2>
+      <p>Off by default, because it is the second most expensive knob after Substeps.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>RTX 5050, cost per frame at 10 substeps.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Resolution</th><th class="n">Cage nodes</th><th class="n">Surface nodes</th><th class="n">Off</th><th class="n">On</th></tr></thead>
+            <tbody>
+              <tr><td>0.25</td><td class="n">461</td><td class="n">314</td><td class="n">1.9 ms</td><td class="n">3.0 ms</td></tr>
+              <tr><td>0.15</td><td class="n">1,707</td><td class="n">848</td><td class="n">2.0 ms</td><td class="n">4.9 ms</td></tr>
+              <tr><td>0.10</td><td class="n">5,233</td><td class="n">1,898</td><td class="n">2.1 ms</td><td class="n">8.4 ms</td></tr>
+              <tr><td>0.07</td><td class="n">14,226</td><td class="n">3,866</td><td class="n">2.5 ms</td><td class="n">15.2 ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>Only nodes on the surface of the cage take part, so the cost grows with the square of an area rather than of a volume. Every surface node is tested against every other one; there is no spatial hash, because integer images and <code>imageAtomicAdd</code> do not work in Blender's Python GPU API and a CPU-side hash would mean reading the whole cage back every frame.</p>
+      <p><strong>Thickness</strong> is the contact gap, as a multiple of Resolution. 1.0 keeps the skinned render surface from visibly interpenetrating. Below about 1.0 a fold can slip between cage nodes, since contact is node against node and nothing checks the space between them.</p>
+      <p>Parts of the body that are already close together in the <strong>rest</strong> pose are left alone. This is what stops the cage fighting its own tets, whose nodes sit exactly one Resolution apart, but it also means a shape authored with two surfaces already touching will let those two surfaces keep passing through each other.</p>
+      <p>Fast motion can still tunnel: a node moving more than the thickness in one substep can cross to the far side before it is ever tested. Raise Substeps or Thickness if you see it.</p>
+    </section>
+
+    <section id="twobodies">
+      <h2>Colliding two bodies</h2>
+      <p>Turn <strong>Collide With Bodies</strong> on for each object you want in the pile. There is no pairing list: everything with it on collides with everything else that has it on, and both sides deform. The correction splits by mass, so a pinned body pushes without being pushed.</p>
+      <p>Because they push each other, they have to be <strong>simulated together</strong>. Three consequences worth knowing before you use it:</p>
+      <ul>
+        <li><strong>Baking one bakes all of them.</strong> A two-way bake of a single body would leave the other absent from its own contact.</li>
+        <li><strong>The group runs at its highest Substeps.</strong> A body's own setting can be raised by the company it keeps. Marrow says so on the console when it happens.</li>
+        <li><strong>Adding a body mid-playback restarts the group.</strong> There is no sound way to splice a body into a simulation already in progress.</li>
+      </ul>
+      <p>Contact uses the same <strong>Thickness</strong> as self-collision, and the group takes the largest value among its members so both sides of a contact agree on the gap. Unlike self-collision there is no rest-pose exemption: two bodies share no rest state, so every contact inside the thickness is a real one.</p>
+      <p>Cost is surface nodes of one body times surface nodes of the other, per pair, with N bodies making N&sup2; pairs. Two or three bodies at Resolution 0.1 is comfortable. A crowd is not.</p>
+    </section>
+
+    <section id="ground">
+      <h2>Ground plane</h2>
+      <p>A cage that starts below the ground plane is lifted onto it, rigidly, before the first frame, and Marrow says so on the console.</p>
+      <p>This is not cosmetic. Collision resolves penetration by moving the predicted position, and the integrator reads that move as velocity of depth divided by the substep length. Mid-simulation that is harmless, because a substep can only sink a node so far. The starting state has no such bound: a unit ball authored straddling the plane left its first substep at <strong>226 m/s</strong>, which is past any tear threshold and shreds the body. Lifting rigidly rather than clamping each node matters too, since clamping flattens the buried half and the stored energy launches it nearly as hard.</p>
+    </section>
+
+    <section id="failure">
+      <h2>Failure</h2>
+      <p>This was called Tearing, and the name promised something it can never do. A tetrahedron past the strain threshold stops resisting distortion, permanently, so the material gives way and lets go. It does <strong>not</strong> split the mesh. Marrow never modifies your topology — that is what keeps your UVs, shape keys and material slots intact — so however much of the cage fails, the render mesh stays one connected piece.</p>
+      <p><strong>What it does buy is release.</strong> Measured on a 2 m bar pinned at the top under heavy gravity, over 40 frames: with Failure off the bar necks and holds, its free end reaching &minus;5.11. With Failure on at Fail Strain 1.4 the neck gives and the rest drops to <strong>&minus;64.37</strong>, twelve times further. Nothing else in the solver ever lets material go.</p>
+      <p><strong>What it does not buy is a break, or permanent damage.</strong> The fallen part is still joined to the pinned part by a filament stretched sixty units and far thinner than a pixel. And failure is not plasticity: stretched to 4.5&times; and released, a body with 80% of its tets failed sprang back keeping 2.9% of the stretch, against 3.0% for a body with none. Failed material goes slack; it does not stay deformed.</p>
+
+      <h3>Breaking it for real</h3>
+      <p><strong>The <code>marrow_torn</code> attribute is how you actually break it.</strong> While Failure is on, every render vertex carries a FLOAT attribute, 1.0 where the tet holding it has failed by this frame. Feed it to a Geometry Nodes Delete Geometry and the failed material disappears, leaving a real gap — Marrow supplies the selection and you own the topology change. It is written from the recorded failure frames rather than read live, so scrubbing a baked cache shows what had failed by that frame instead of what fails by the end.</p>
+
+      <h3>What Fail Strain measures</h3>
+      <p><strong>Fail Strain is the largest principal stretch a tet survives</strong>, so it reads the same in every direction: 1.5 means failure once anything is pulled to 1.5&times; its rest length, whether that is a pull along one axis, a uniform swell or a shear. Rotation is not strain and never fails.</p>
+      <p>One consequence worth knowing: a volume-preserving squash stretches the material sideways, and that counts. Press a blob to a quarter of its height and it has stretched 2&times; laterally, which fails a 1.5 threshold. If a heavy press is failing material you wanted intact, raise Fail Strain or switch Failure off for that shot.</p>
+
+      <h4>Two things a failed tet still does</h4>
+      <ul>
+        <li><strong>It keeps a volume constraint</strong>, targeting the volume it had at the instant it broke. Broken material is not new material. Without this the cage inflated without bound, measured at 3.1&times; on a stretch test.</li>
+        <li><strong>It cannot be the last tet holding a node.</strong> A node whose every tet has torn has no constraint at all: it free-falls, and because the render topology is fixed it drags a spike behind it instead of becoming debris. The tear is refused instead. On a stretch test this took 324 orphaned nodes to zero while still tearing four fifths of the cage.</li>
+      </ul>
+
+      <h3>Ending a sticky stretch</h3>
+      <p>Material held by a sticky collider that pulls away necks without limit, because nothing else in the solver can fail. <strong>Stick Break</strong> ends it by releasing the contact, so the body drops away whole rather than necking and parting: measured on a 1 m sphere with a sticky plate lifted 1.55 m, every node released at 0.05 and at 0.15, and none released at 0.25 — the useful range sits below about a quarter of the body, which is why the slider stops there. <strong>Failure</strong> ends it by giving way in the material instead, which is the one that leaves a neck. Neither produces a gap on its own; that is what <code>marrow_torn</code> and a Delete Geometry node are for.</p>
+    </section>
+
+    <section id="regions">
+      <h2>Per-region stiffness</h2>
+      <p><strong>Stiffness Group</strong> makes one body two materials. Point it at a vertex group on the object and paint that group where the body should be firm; the weight scales <strong>Stiffness</strong> and <strong>Volume Preservation</strong> together, per tet.</p>
+      <p>The mapping is anchored at the top. Weight 1 leaves both sliders exactly as set, and weight 0 drops to <strong>Softest</strong> — so the sliders stay the material you tuned and the group says where the body gives. Anchoring it the other way, with the multiplier equal to the raw weight, would make every unpainted vertex zero-stiffness: paint one stiff region and the rest of the body turns to soup. Softest defaults to 0.1, a tenth as stiff, and 0 does mean no resistance at all.</p>
+      <p>Both terms take the same multiplier. Stiff material is stiff in shear and in volume alike, and scaling only one would change the material's Poisson ratio rather than its stiffness.</p>
+      <p>The group is painted on the render mesh and read by the cage underneath through the same k-nearest-vertex map <a href="#pinning">Pinning</a> and <a href="#attachment">Attachment</a> use, then averaged over each tet's four corners. Nothing is baked onto the cage, so unlike the fiber curve a repaint needs no re-tetrahedralize — return to the start frame in Live, or Free and bake again, and the solver is rebuilt with the new weights. An empty group name, a renamed group, or a group with no weights painted all leave the body uniform and cost nothing.</p>
+      <p>The fiber term keeps its own <strong>Fiber Stiffness</strong> and is not scaled by the group. A soft region with fibers in it still pulls at full strength; it just resists less around them.</p>
+    </section>
+
+    <section id="fiber">
+      <h2>Fiber</h2>
+      <p>Every tet in Marrow is otherwise isotropic: it resists distortion equally in all directions. <strong>Fiber</strong> adds one direction that is different, and drives it — the tet is told to shorten along its fiber, and the volume-preservation constraint puts the material it displaces out sideways. That sideways bulge is what makes it read as a muscle instead of a shrinking rod.</p>
+      <p>Directions come from a <strong>Curve</strong> you point at the body. Each tet takes the tangent at the nearest point on that curve as its fiber direction, and the arclength at that point as its place in the wave, so the contraction travels from one end of the body to the other instead of the whole thing pulsing at once. Both are sampled at Tetrahedralize and frozen — a fiber direction is a property of the rest shape, so an animated curve has no meaning as a source. Change the curve and tetrahedralize again.</p>
+
+      <div class="note">
+        <span class="lab">Two passes</span>
+        <p><strong>Setting the curve takes two Tetrahedralize passes.</strong> The Curve field lives below the "Tetrahedralize to simulate" gate, so it does not exist until the object already has a cage. The flow is Tetrahedralize, then set Curve, then Tetrahedralize again — the first pass only builds the cage the field needs to appear on, and the second is the one that samples the curve and bakes fibers.</p>
+      </div>
+
+      <div class="warn">
+        <span class="lab">Silent failure to know about</span>
+        <p><strong>A bevelled or cyclic curve bakes no fibers, and says nothing about it.</strong> The curve is evaluated to a polyline that must resolve to one open path: a bevel or extrude turns it into a tube, a cyclic curve into a ring, and neither has an unambiguous direction to hand a fiber. Either one bakes nothing, silently — the panel keeps reading "Tetrahedralize to bake fibers" exactly as if no curve had been set at all. If fibers refuse to bake, check the curve for a bevel or <code>Cyclic U</code> before looking anywhere else.</p>
+      </div>
+
+      <h3>The wave</h3>
+      <p>The wave itself is procedural, not keyframed. <strong>Wavelength</strong> and <strong>Speed</strong> set its shape and how fast it travels: the crest moves at Wavelength &times; Speed in world units per second, and a negative Speed sends it the other way. <strong>Amplitude</strong> is how hard it squeezes — 0.3 shortens a fiber to 70% of its rest length at the crest. <strong>Waveform</strong> picks a smooth cosine or a hard on/off square.</p>
+
+      <h3>Noise</h3>
+      <p><strong>Noise</strong> is what stops it looking like a machine. A pure travelling wave is periodic in space and in time: every crest arrives exactly one Wavelength after the last and squeezes exactly as hard, and nothing alive moves like that. Noise jitters both — when a crest arrives, and how deep it goes.</p>
+      <p>The last column is the one that matters. An activation that depends only on <code>position &minus; speed &times; time</code> is a <strong>rigid</strong> travelling wave: one fixed profile sliding along the body, the same picture every frame. Making that profile wobbly does not help — it still slides unchanged, and still reads as clockwork. The number below is how far the body's shape at t&nbsp;=&nbsp;0.5&nbsp;s differs from its shape at t&nbsp;=&nbsp;0 slid along by the best possible amount. Near zero means rigid.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>Wavelength 2.0, Speed 1.0, one fixed point on the body.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Noise</th><th class="n">Beat interval</th><th class="n">Depth at the crest</th><th class="n">Rigid-shift residual</th></tr></thead>
+            <tbody>
+              <tr><td>0.00</td><td class="n">1.000 &plusmn; 0.000 s</td><td class="n">0.500 every time</td><td class="n">0.001</td></tr>
+              <tr><td>0.35</td><td class="n">0.999 &plusmn; 0.074 s</td><td class="n">0.416 to 0.575</td><td class="n">0.103</td></tr>
+              <tr><td>0.70</td><td class="n">0.998 &plusmn; 0.139 s</td><td class="n">0.337 to 0.637</td><td class="n">0.206</td></tr>
+              <tr><td>1.00</td><td class="n">0.876 &plusmn; 0.265 s</td><td class="n">0.280 to 0.883</td><td class="n">0.301</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>So the noise is sampled in position <em>and</em> time, at a drift rate that is deliberately not the wave's own — it slides through the wave rather than along with it, and no two cycles come out the same. Up to 0.7 the mean beat interval stays at the Wavelength and Speed you asked for, so Noise perturbs the wave rather than quietly retuning it. At 1.0 it is strong enough to merge and split crests outright, which is why the mean drops; that is the intended extreme, not a bug.</p>
+
+      <h4>It skews the pulse</h4>
+      <p>A cosine crest eases in and eases out at exactly the same rate, and no muscle does that — it snaps into the contraction and drifts out of it. The warp that skews it is driven by its own field, so no two crests share a profile.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>Contraction time over release time, across 50-odd crests.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Noise</th><th class="n">Mean</th><th class="n">Range</th></tr></thead>
+            <tbody>
+              <tr><td>0.00</td><td class="n">1.000</td><td class="n">0.998 to 1.002</td></tr>
+              <tr><td>0.35</td><td class="n">1.003</td><td class="n">0.741 to 1.392</td></tr>
+              <tr><td>1.00</td><td class="n">1.128</td><td class="n">0.312 to 4.088</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <h4>It drifts the stroke rate</h4>
+      <p>Everything above perturbs a crest — when it arrives, how hard it bites, what shape it is — and none of it touches the rhythm underneath. A travelling wave at a fixed Speed strikes the same pose again every 1/Speed seconds however each crest is dressed, and that is what still reads as repetition.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>Whole body correlated against itself, ignoring lags under two seconds.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Noise</th><th class="n">Repeats itself at</th><th class="n">Slowest stroke rate at Speed 1.2</th></tr></thead>
+            <tbody>
+              <tr><td>0.00</td><td class="n">0.94</td><td class="n">1.200 (metronome)</td></tr>
+              <tr><td>0.35</td><td class="n">0.70</td><td class="n">1.015</td></tr>
+              <tr><td>0.70</td><td class="n">0.40</td><td class="n">0.831</td></tr>
+              <tr><td>1.00</td><td class="n">0.20</td><td class="n">0.672</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>The drift is a function of time alone, so the whole body speeds up and slows down together — an animal changing gait, where a position-dependent term would only be more phase jitter. It scales with Speed rather than being absolute, which keeps it meaningful at any Speed and keeps the wave travelling forwards: at Noise 1.0 the instantaneous rate swings between 56% and 143% of the number you set, and never reaches zero. A standing wave at Speed 0 has no rhythm to drift, so this term goes quiet and the rest keep working.</p>
+      <p>The jitter is bounded so the wave's phase always advances along the body, and the skew is bounded so a crest can never fold into two. A jitter that ran the phase backwards would hand neighbouring tets unrelated points in the cycle and shred the body instead of undulating it, and the coefficients are picked against that bound rather than by eye.</p>
+      <p>Zero is the clockwork wave exactly — the noise arithmetic is skipped, not multiplied by zero — so an older scene keeps the motion it had. New bodies default to 0.35.</p>
+    </section>
+
+    <section id="bending">
+      <h2>Bending</h2>
+      <p>A wave keyed on arclength alone contracts a whole cross-section at once. That is a <strong>squeeze</strong> travelling down a straight body — an accordion ripple — and it cannot ask for a bend however it is shaped, because there is nothing asymmetric in it to bend towards. Any bending you get from it is Euler buckling, which goes wherever it likes.</p>
+      <p>Real undulation is contralateral: one flank contracts while the other releases, and that pairing travels. <strong>Bend</strong> is how much of that the wave does. Each tet is baked with a signed lateral offset from the curve, and Bend offsets its place in the wave by that — a quarter cycle either way, so the two flanks end up half a cycle apart. Tets on the curve itself read zero and stay in phase with both, which is the right answer for the neutral axis of a bending body: it neither leads nor lags.</p>
+      <p>Measured on a 6 m cylinder, gravity only, Bend 0 against Bend 1 with every other setting identical: <strong>peak vertex difference 0.46 m</strong>, rms 0.16 m. It is not a subtle knob.</p>
+      <p><strong>Sideways is left and right</strong>, measured about the world's up axis, because that is the plane a body lying on the ground undulates in. A spine running straight up has no left or right in that plane, so those tets fall back to bending towards world +X — a tentacle standing on end still bends rather than silently going rigid.</p>
+      <div class="note">
+        <span class="lab">Old cages</span>
+        <p>The side is baked at Tetrahedralize alongside the direction and arclength, so <strong>a cage built before this existed has no side column and reads as unfibered.</strong> Tetrahedralize again to get one; the panel will keep saying "Tetrahedralize to bake fibers" until you do.</p>
+      </div>
+      <p>Set Bend to 0 for the muscle case — a bicep bulging along its own length wants the whole section contracting together, not one side leading the other.</p>
+      <p>Contraction alone moves nothing. Locomotion is contraction plus grip, so a crawling body needs <a href="#friction">Friction</a> above zero and something to push against — <code>tools/fiber_demo.py</code> builds a working scene to start from.</p>
+      <p>A torn tet loses its fiber along with its stiffness. Torn muscle does not pull.</p>
+    </section>
+
+    <section id="fields">
+      <h2>Gravity and force fields</h2>
+      <p><strong>Gravity comes from the scene.</strong> Marrow used to hardcode &minus;9.81 and ignore Scene Properties, so turning gravity off in the place every other Blender physics system reads it did nothing here. It now obeys both the direction and the switch, and the per-body <strong>Gravity</strong> multiplier rides on top: 0 makes one body weightless while the rest of the shot still falls, and a negative value falls upwards.</p>
+      <p><strong>Force Fields</strong> takes a collection, the same way Colliders does. Every <strong>Force</strong>, <strong>Wind</strong>, <strong>Vortex</strong> and <strong>Turbulence</strong> object in it pushes the body, nested collections included, and their strength, falloff power and max distance are read from the field settings on each object rather than duplicated into the Marrow panel.</p>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Force</strong></td><td>Pushes along the radius from the field object.</td></tr>
+            <tr><td><strong>Wind</strong></td><td>Blows along the object's local +Z.</td></tr>
+            <tr><td><strong>Vortex</strong></td><td>Turns around that same axis.</td></tr>
+            <tr><td><strong>Turbulence</strong></td><td>Swirls, answering to <strong>Size</strong>, <strong>Flow</strong> and <strong>Seed</strong>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The panel reports how many objects in the collection actually drive the body, so a collection of the wrong field type says so instead of doing nothing quietly. Other field types are ignored: Blender exposes no way to ask it for the combined field at a point, so the supported ones are reimplemented against their documented falloff; Magnetic and the rest need models nothing here has, and guessing at one would be worse than skipping it.</p>
+      <div class="note">
+        <span class="lab">Not Blender's Perlin turbulence</span>
+        <p>Marrow's Turbulence is three octaves of sine read through oblique directions — a smooth swirling field that varies across the body, drifts with Flow and shifts with Seed, but <strong>will not match a particle sim driven by the same field object</strong>. That is a deliberate trade for correctness elsewhere: lattice noise has to floor a coordinate to an integer, and float32 on the card floors a value a hair either side of a lattice line differently from the float64 reference solver every kernel here is diffed against. A whole cell of difference against a 2e-5 tolerance would fail at random, so the fiber wave and this both use sines instead.</p>
+      </div>
+      <p>Fields are evaluated in the kernel, where the node actually is, from a texture holding three texels per field. An animated field costs one upload of a few pixels per frame however large the cage is — the cost does not scale with the body.</p>
+    </section>
+
+    <section id="attachment">
+      <h2>Attachment</h2>
+      <p><strong>Attachment</strong> makes an armature — or any deforming modifier — drive the simulation from the inside instead of bending the result afterwards. Every frame Marrow evaluates the object's modifier stack against the stored rest shape and pulls each cage node towards where the stack puts it, so the bones lead and the flesh follows with the full XPBD behaviour: inertia, jiggle, collision and tearing all stay in the loop.</p>
+      <p><strong>Attach Stiffness</strong> is how hard the flesh follows. 1.0 rides the animation exactly; lower values let the bones lead and the flesh lag, jiggle and overshoot.</p>
+      <p>While Attachment is on, modifiers that keep the vertex count — Armature, Simple Deform and the like — are <strong>muted in the display</strong>, viewport and render. They feed the targets, and the written simulation is the display; leaving them shown would deform the result a second time, measured at exactly twice the bone travel. Modifiers that change the count — Subdivision, Decimate — are the opposite: their vertices have no per-base-vertex meaning, so they cannot feed the targets, and they stay shown to smooth the simulated shape. Toggling Attachment off or De-tetrahedralize hands the original visibility back.</p>
+      <p>Toggling Attachment on or changing Attach Stiffness mid-simulation restarts the sim on the next frame instead of waiting for a trip to the start frame. The targets come from Blender's evaluated mesh, so linear and dual quaternion skinning both work without Marrow reimplementing either.</p>
+      <p>Contacts keep the last word: the attachment pull runs before collision, so a ground plane or collider still stops a body the bone drags into it.</p>
+      <p>Attachment needs the object to keep its vertex count: the weight table is per base vertex, which is why count-changing modifiers are kept out of the targets and left on the display only. Weights are synthesized once against the rest shape, in object space, so moving or rotating the object afterwards cannot scramble them; like the rest of Marrow the simulation itself stays in the world frame it was tetrahedralized in. Tetrahedralize fills the cage from the modelled shape whichever frame it runs on — the capture parks the modifier stack, so a pose playing at tet time cannot wedge the posed silhouette between the lattice and the bind. Editing the mesh needs a re-tetrahedralize, same rule as the bind data.</p>
+    </section>
+
+    <section id="pinning">
+      <h2>Pinning</h2>
+      <p><strong>Pin Group</strong> holds material in place. Point it at a vertex group on the object and paint that group wherever the body must not move; weight 1.0 is a solid pin.</p>
+      <p>The group is painted on the render mesh, because that is the geometry you can see and select — cage nodes are interior lattice points and carry no vertex groups of their own. Each node reads the group through the same k-nearest-vertex map the attachment pass uses, so a node is held exactly when the surface around it is, and pinning works whether or not Attachment is on.</p>
+      <p>A pin is zero inverse mass, and every pass in the solver already defers to it. Predict skips the gravity step, integrate holds the position and the velocity both, and the collider and attachment kernels each check it first: a pin outranks a collider, and a pin outranks the armature. Nothing pushes a pinned node anywhere.</p>
+      <p><strong>A weight below 1.0 is not a partial hold.</strong> It scales inverse mass, so 0.5 is a node with twice the mass, not a node half held — gravity is an acceleration, so a heavy node still falls at g. What the falloff buys is the boundary. The blend across the edge of a painted region makes the transition nodes progressively heavier instead of dropping a hard mass discontinuity into the middle of the material, which shows as a stress ring. Paint the region you want held at a solid 1.0 and let the blend feather the edge.</p>
+
+      <h3>Moving the object</h3>
+      <p><strong>Moving the object takes effect on the next restart.</strong> The cage is built in the world frame Tetrahedralize saw, and until 2.1 it stayed there: move the object and the body went on simulating and drawing where it used to be, visibly detached from its own origin. Now the solver rebases into the object's current transform every time it is rebuilt, so the flow is move it, scrub to the start frame, and the body is there.</p>
+      <p>Sampled at the rebuild, not per frame — which is what keeps the object transform out of the animation. An animated object still cannot drive the simulation; only the transform standing at restart is read. Rotation and translation are followed; a <strong>scale is refused with a message</strong>, because resizing the cage under a rest shape measured before it would silently change both the mass and what Stiffness means. Apply the scale, or Tetrahedralize again.</p>
+      <p>Pins anchor in the world frame the body was tetrahedralized in — the same rule as the bind and attachment data — so moving the object afterwards does not drag the pin along with it. That is the point on an animated character: a pinned foot stays nailed where it was while the rest of the body is free to be driven.</p>
+      <p>Changing the Pin Group or Follows Animation mid-simulation takes effect on the next frame, the same as Attachment — all three change what the solver is built from. Repainting weights <em>inside</em> a group that is already selected does not: the setting itself has not changed, so nothing knows to rebuild. Return to the start frame in Live, or Free and bake again after a Bake.</p>
+
+      <h3>Follows Animation</h3>
+      <p><strong>A pin holds; Attachment carries it.</strong> By default a pin is a <em>static</em> anchor, so hooking a pinned region to an Empty and moving it does nothing — the pin is exactly what the solver holds still, and the attachment kernel skips a node with no inverse mass. Tick <strong>Follows Animation</strong> and the pin rides the animation instead: still rigid, still outranking every collider, but driven rather than frozen.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>Cube with its top face hooked to an Empty moved 3.0 in X.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Setup</th><th class="n">Top follows</th><th class="n">Bottom</th></tr></thead>
+            <tbody>
+              <tr><td>Pin Group only, no Attachment</td><td class="n">&minus;0.004</td><td class="n">0.102</td></tr>
+              <tr><td>Attachment 0.5, no pin</td><td class="n">2.600</td><td class="n">0.929</td></tr>
+              <tr><td>Pin + Attachment, Follows Animation <strong>off</strong></td><td class="n">0.240</td><td class="n">0.092</td></tr>
+              <tr><td>Pin + Attachment, Follows Animation <strong>on</strong></td><td class="n"><strong>2.874</strong></td><td class="n">0.815</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>Row 4 is the shape you usually want: the pinned region tracks the hook almost exactly while the rest of the body lags and jiggles behind it. Row 3 is the trap — a static pin and Attachment fight each other, and the pin wins, dragging the whole thing back.</p>
+
+      <h4>Set Attach Stiffness to 0 to let a driven pin carry the body</h4>
+      <p>This is the setting the mode is built for, and it is worth understanding why. Attachment aims <em>every</em> node at its evaluated position, and for material the animation does not reach, that aim is the rest pose — so the same pass that supplies a pin its target is otherwise nailing the rest of the body down. At 0 the pass runs for the pins alone and leaves the free material entirely to the simulation.</p>
+
+      <figure class="measured">
+        <figcaption><b>Measured</b><span>23,697-node cage; a 27-vertex painted region hooked to an Empty travelling 1.473.</span></figcaption>
+        <div class="tw">
+          <table class="num">
+            <thead><tr><th>Attach Stiffness</th><th class="n">Pin travel</th><th class="n">Body travel</th></tr></thead>
+            <tbody>
+              <tr><td>0.50</td><td class="n">1.473</td><td class="n">0.026</td></tr>
+              <tr><td>0.05</td><td class="n">1.473</td><td class="n">0.040</td></tr>
+              <tr><td>0.01</td><td class="n">1.473</td><td class="n">0.374</td></tr>
+              <tr><td><strong>0.00 (pins only)</strong></td><td class="n">1.473</td><td class="n"><strong>1.552</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </figure>
+
+      <p>The pin tracks perfectly at every setting. What changes is whether the body comes with it — and nothing about mass, gravity, ground contact or material Stiffness was ever the limit; releasing the attachment grip was the whole of it. A high Attach Stiffness also switches the physics off entirely: at 1.0 the pass hard-snaps every node to its evaluated position after the elastic solve, so Marrow just replays the modifier stack and Stiffness stops mattering — measured identical body travel to three decimals across a 400&times; change in it.</p>
+      <p>Use a stiffness above 0 only when you want the <em>whole</em> body to follow the animation with soft-body lag, which is what Attachment is for on its own. Mixing that with a driven pin fights itself.</p>
+      <p><strong>Follows Animation needs Attachment on</strong>, because the attachment pass is where per-node targets come from; the checkbox greys out otherwise. Targets are sampled once per frame, the same treatment collider transforms get, so a driven pin reaches the frame's position on the first substep and holds.</p>
+      <p>Leave Follows Animation <strong>off</strong> to nail a region in world space while an armature drives the rest — a foot planted on the floor while the body moves over it. That is the case the flag exists to preserve.</p>
+      <div class="note">
+        <span class="lab">One more reason to turn Attachment on</span>
+        <p>Modifiers are only muted in the display while Attachment is on. With a pin alone, a Hook or Armature stays shown, so Marrow writes the simulation into the mesh and the modifier then bends that result a second time. The stretched spike this produces is display only — the simulation underneath is unharmed.</p>
+      </div>
+    </section>
+
+    <section id="falsecolor">
+      <h2>False color</h2>
+      <p><strong>False Color</strong>, in the Display box, rainbow-shades the render surface by how far the material is stretched, in the style of Vellum's false color mode. The value is the edge stretch ratio: 1 at rest, hot where pulled past rest length, cold where compressed.</p>
+      <p>While stretch display is active a generated emission material sits in slot 0; choosing <strong>Off</strong> puts the object's own material back exactly as it was, including on an object that had no material at all, and De-tetrahedralize cleans up too. The scalar is computed per tet on the CPU from the cached cage positions, so switching the mode on after a bake still colours every cached frame.</p>
+    </section>
+
+    <section id="howitworks">
+      <h2>How it works</h2>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Stage</th><th>Where</th></tr></thead>
+          <tbody>
+            <tr><td>Tetrahedralize</td><td>CPU, numpy, once</td></tr>
+            <tr><td>Tet data</td><td>Mesh vertices, ID properties and POINT attributes, surviving save and load</td></tr>
+            <tr><td>Rest shape</td><td>A <code>marrow_rest</code> POINT attribute, so De-tetrahedralize can undo the whole thing</td></tr>
+            <tr><td>Pack to textures</td><td>CPU to <code>GPUTexture</code>, once per simulation start</td></tr>
+            <tr><td>Solve</td><td>GLSL compute, 6 kernels &times; substeps &times; constraint colours</td></tr>
+            <tr><td>Skin and readback</td><td>GPU blend, then only the render vertices cross PCIe</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The cage uses a <strong>cube-split lattice with checkerboard parity</strong>, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so a model with deep concavities is filled more generously than it strictly needs.</p>
+      <p>Tets are graph-coloured at build time so each colour dispatches race-free with no atomics. Interior cage nodes never cross PCIe; only render vertices are read back.</p>
+    </section>
+
+    <section id="longruns">
+      <h2>Long runs</h2>
+      <p><strong>Tetrahedralize and Bake report progress and can be cancelled.</strong> Both show the stage and a percentage in the status bar while they work, and <strong>Esc</strong> stops them. Neither blocks the window any more, so a dense cage no longer looks like a hang — which it did, and people killed Blender over it.</p>
+      <p>The two cancel differently, because the work is different. Esc during Tetrahedralize discards everything: nothing is written to the file until the cage is complete, so there is no half-built state to leave behind. Esc during a Bake <strong>keeps the frames it already simulated</strong> — the cache is keyed by frame, so a bake stopped at 96 of 250 is playable to 96 and is not a wasted wait.</p>
+      <p>Cost scales sharply with Resolution: halving it is roughly eight times the cage. On a 34,000-vertex mesh, Resolution 0.25 builds in about 7 seconds, 0.12 in 22, and 0.08 in 66 — and the voxel pass, which asks inside-or-outside about every cell in the bounding box, is most of that at fine settings. Tetrahedralize also names the cage size when it finishes, and warns there if the cage is over the node budget, rather than letting Bake be the first to mention it.</p>
+      <p><code>tools/estimate_cage.py</code> reports what a setting will cost before you commit to it: run it from the Scripting tab with the object selected.</p>
+    </section>
+
+    <section id="gpu">
+      <h2>A note on GPU reliability</h2>
+      <p>Blender's Python GPU API exposes no memory barrier; <code>gpu.compute</code> offers only <code>dispatch</code>. Marrow works around this. Readbacks are verified against a generation mark stamped by the writing kernel, uploads are read back and confirmed, and the bind texture is re-checked before every dispatch because it has been observed losing its contents after a verified upload.</p>
+      <p>When a repair happens Marrow says so on the console rather than staying quiet. If you see corrupt frames, please report them along with that console output.</p>
+    </section>
+
+    <section id="limitations">
+      <h2>Limitations</h2>
+      <ul class="limits">
+        <li><strong>Contact is node against node only.</strong> No edge-edge or node-triangle contact, for either self-collision or body-to-body, and neither scales past roughly 20,000 surface nodes. Collision against a <em>collider</em> is a distance field and does not have this limit.</li>
+        <li><strong>A deforming collider is baked once</strong>, and features thinner than one SDF cell are missed. See <a href="#colliders">Colliders</a>.</li>
+        <li><strong>Friction does not ride a moving collider.</strong> Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.</li>
+        <li><strong>A body must not start inside a sticky collider.</strong> See <a href="#sticky">Sticky colliders</a>. Only the ground plane depenetrates its starting state.</li>
+        <li><strong>A live cache lives only in memory.</strong> Bakes are written beside the .blend and reload with it; a live cache is rebuilt as the timeline plays, which is what makes it free to throw away. See <a href="#diskcache">Baked caches on disk</a>.</li>
+        <li><strong>Very thin features can still outrun the cage.</strong> The cage keeps every cell whose centre is inside the mesh, plus every cell holding a mesh vertex — so a feature thinner than a cell is covered as long as the mesh carries vertices there. What it does not cover is a large flat triangle spanning cells with no vertex in them, which is a coarse mesh rather than a thin one. Tetrahedralize warns when more than 1% of render vertices land more than a Resolution outside the cage and names how far the worst one is; those vertices are not simulated, they are glued to whichever tet was nearest and dragged by it. Subdivide the mesh, or lower Resolution.</li>
+        <li><strong>No plasticity.</strong> Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. <code>mu</code> and <code>lam</code> vary per tet through a Stiffness Group, but every tet always wants its original shape.</li>
+        <li><strong>Attachment weights are synthesized once</strong>, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.</li>
+        <li><strong>Measured on the OpenGL backend.</strong> Blender is moving to Vulkan, and the kernels need revalidating there.</li>
+      </ul>
+    </section>
+
+    <section id="development">
+      <h2>Development</h2>
+      <p>Core geometry and solver maths live in <code>marrow/core/</code> and never import <code>bpy</code>, which is what makes them testable outside Blender.</p>
+      <pre><code><span class="c"># Core suite (pytest, needs a venv on system Python 3.12 with numpy + pytest)</span>
+.venv/Scripts/python -m pytest tests/core
+
+<span class="c"># Blender suite (Blender's bundled Python has no pytest, so this is an</span>
+<span class="c"># assert-based runner; it exits non-zero on failure)</span>
+blender -b --factory-startup --python tests/blender/run_tests.py</code></pre>
+
+      <div class="warn">
+        <span class="lab">Run the Blender suite on 5.2</span>
+        <p>Check which binary you invoked. Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with <code>GPU functions for drawing are not available in background mode</code>, and a windowed 4.5 driven by <code>--python</code> at startup fails each readback with <code>StaleReadError: a RGBA32F upload never became visible</code>. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose.</p>
+      </div>
+
+      <p>The runner drives <strong>one Blender process per test module</strong>. Running everything in one process invented failures that were not there — contact modules passed alone and failed one to three a run after the other forty, with the failing set rotating, which is GPU resource pressure from every module holding solvers and textures in its globals for the whole run. With isolation, red means wrong.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Invocation</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>run_tests.py</code></td><td>Spawn a Blender per module, aggregate, exit 1 on any failure.</td></tr>
+            <tr><td><code>-- --module NAME</code></td><td>The worker: run one module in-process.</td></tr>
+            <tr><td><code>-- --in-process</code></td><td>The old single-process behaviour. Faster, and it lies.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>A numpy reference solver in <code>marrow/core/solver_ref.py</code> is the test oracle: every GPU kernel is diffed against it, because a wrong sign in a compute shader is otherwise indistinguishable from a wrong sign in the constraint derivation.</p>
+      <p>The addon must use <strong>relative imports only</strong>. Installed as an extension its package is <code>bl_ext.user_default.marrow</code>, not <code>marrow</code>, so an absolute self-import fails at register time on a user's machine while every test still passes. <code>tests/core/test_packaging.py</code> guards this.</p>
+      <p>Never <code>pip install</code> into Blender's bundled Python.</p>
+    </section>
+
+    <section id="licence">
+      <h2>Licence</h2>
+      <p>GPL-3.0-or-later.</p>
+      <footer>
+        Marrow 2.5.0 &nbsp;/&nbsp; Blender 5.2 &nbsp;/&nbsp; every number on this page was measured, not estimated.
+      </footer>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---- theme toggle -------------------------------------------- */
+  var root = document.documentElement;
+  var btn = document.getElementById("theme");
+  btn.addEventListener("click", function () {
+    var dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    var now = root.getAttribute("data-theme") || (dark ? "dark" : "light");
+    root.setAttribute("data-theme", now === "dark" ? "light" : "dark");
+  });
+
+  /* ---- mobile contents drawer ---------------------------------- */
+  var rail = document.getElementById("rail");
+  var toggle = document.getElementById("railtoggle");
+  var narrow = matchMedia("(max-width: 900px)");
+
+  function syncRail() {
+    if (narrow.matches) {
+      rail.hidden = toggle.getAttribute("aria-expanded") !== "true";
+    } else {
+      rail.hidden = false;
+    }
+  }
+  toggle.addEventListener("click", function () {
+    toggle.setAttribute("aria-expanded",
+      toggle.getAttribute("aria-expanded") === "true" ? "false" : "true");
+    syncRail();
+  });
+  narrow.addEventListener("change", syncRail);
+  syncRail();
+
+  /* ---- sidebar filter ------------------------------------------ */
+  var q = document.getElementById("q");
+  var groups = [].slice.call(document.querySelectorAll(".nav-group"));
+  q.addEventListener("input", function () {
+    var term = q.value.trim().toLowerCase();
+    groups.forEach(function (g) {
+      var hits = 0;
+      [].forEach.call(g.querySelectorAll("a"), function (a) {
+        var hit = !term || a.textContent.toLowerCase().indexOf(term) !== -1;
+        a.hidden = !hit;
+        if (hit) hits++;
+      });
+      g.hidden = hits === 0;
+    });
+  });
+
+  /* ---- scroll spy ---------------------------------------------- */
+  var links = {};
+  [].forEach.call(document.querySelectorAll(".nav a[href^='#']"), function (a) {
+    links[a.getAttribute("href").slice(1)] = a;
+  });
+  var seen = {};
+  var spy = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
+    var current = null;
+    [].forEach.call(document.querySelectorAll("main section"), function (s) {
+      if (seen[s.id] && !current) current = s.id;
+    });
+    for (var id in links) links[id].classList.toggle("on", id === current);
+  }, { rootMargin: "0px 0px -70% 0px" });
+  [].forEach.call(document.querySelectorAll("main section"), function (s) {
+    spy.observe(s);
+  });
+
+  /* ---- masthead lattice ----------------------------------------
+     A cage bar running the fiber wave: contraction along the fiber,
+     a volume-preserving bulge sideways, and the contralateral quarter
+     cycle that Bend adds. Edges are shaded by their own stretch ratio,
+     which is exactly what False Color displays.
+     -------------------------------------------------------------- */
+  var cv = document.getElementById("lattice");
+  var ctx = cv.getContext("2d");
+  var still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  var NX = 34, NY = 4;              // nodes along the bar, and across it
+  var LAMBDA = 0.34;                // wavelength as a fraction of the bar
+  var SPEED = 0.28, AMP = 0.34, BEND = 1.0;
+
+  function css(name) {
+    return getComputedStyle(document.body).getPropertyValue(name).trim();
+  }
+
+  function mix(a, b, t) {
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * t),
+      Math.round(a[1] + (b[1] - a[1]) * t),
+      Math.round(a[2] + (b[2] - a[2]) * t)
+    ];
+  }
+
+  function hex(h) {
+    h = h.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  var pts = new Float32Array(NX * NY * 2);
+  var rest = new Float32Array(NX * NY * 2);
+
+  function build(t, w, h) {
+    var padX = 26, padY = 30;
+    var spanX = w - padX * 2, spanY = h - padY * 2;
+    for (var j = 0; j < NY; j++) {
+      for (var i = 0; i < NX; i++) {
+        var k = (j * NX + i) * 2;
+        var fx = i / (NX - 1);
+        var side = NY > 1 ? (j / (NY - 1)) * 2 - 1 : 0;   // -1 .. 1 across
+        rest[k] = padX + fx * spanX;
+        rest[k + 1] = padY + (side * 0.5 + 0.5) * spanY;
+
+        var u = fx / LAMBDA - t * SPEED + BEND * 0.25 * side;
+        var a = AMP * 0.5 * (1 - Math.cos(2 * Math.PI * u));
+        // Displacement whose gradient is the contraction: shortens at
+        // the crest and lets the material pile up either side of it.
+        var dx = -(AMP * LAMBDA / (2 * Math.PI)) * Math.sin(2 * Math.PI * u) * spanX;
+        var bulge = 1 + a * 0.85;
+        pts[k] = rest[k] + dx;
+        pts[k + 1] = padY + (side * 0.5 * bulge + 0.5) * spanY;
+      }
+    }
+  }
+
+  function seg(k1, k2, cold, warm, mid) {
+    var dx = pts[k1] - pts[k2], dy = pts[k1 + 1] - pts[k2 + 1];
+    var rx = rest[k1] - rest[k2], ry = rest[k1 + 1] - rest[k2 + 1];
+    var len = Math.hypot(dx, dy), r0 = Math.hypot(rx, ry) || 1;
+    var s = len / r0;                                   // stretch ratio
+    var t = Math.max(0, Math.min(1, (s - 0.72) / 0.56));
+    var c = t < 0.5 ? mix(cold, mid, t * 2) : mix(mid, warm, (t - 0.5) * 2);
+    ctx.strokeStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(pts[k1], pts[k1 + 1]);
+    ctx.lineTo(pts[k2], pts[k2 + 1]);
+    ctx.stroke();
+  }
+
+  var t0 = performance.now();
+
+  function draw(now) {
+    var dpr = Math.min(devicePixelRatio || 1, 2);
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== w * dpr || cv.height !== h * dpr) {
+      cv.width = w * dpr;
+      cv.height = h * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var cold = hex(css("--accent"));
+    var warm = hex(css("--hot"));
+    var mid = hex(css("--ink-3"));
+
+    build(still ? 1.9 : (now - t0) / 1000, w, h);
+
+    for (var j = 0; j < NY; j++) {
+      for (var i = 0; i < NX; i++) {
+        var k = (j * NX + i) * 2;
+        if (i < NX - 1) seg(k, k + 2, cold, warm, mid);
+        if (j < NY - 1) seg(k, k + NX * 2, cold, warm, mid);
+        if (i < NX - 1 && j < NY - 1) seg(k, k + NX * 2 + 2, cold, warm, mid);
+      }
+    }
+
+    ctx.fillStyle = css("--ink-3");
+    for (var n = 0; n < NX * NY; n++) {
+      ctx.fillRect(pts[n * 2] - 1, pts[n * 2 + 1] - 1, 2, 2);
+    }
+
+    if (!still) requestAnimationFrame(draw);
+  }
+
+  if (still) draw(t0); else requestAnimationFrame(draw);
+  addEventListener("resize", function () { if (still) draw(t0); });
+})();
+</script>
+</body>
+</html>

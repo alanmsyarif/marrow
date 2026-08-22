@@ -6,6 +6,8 @@ Marrow fills a mesh with a tetrahedral cage, solves a stable neo-Hookean XPBD sy
 
 Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric soft body; the legacy `SOFT_BODY` modifier is a surface spring lattice with no volume preservation. Marrow fills that gap.
 
+Documentation is also a site: **[alanmsyarif.github.io/marrow](https://alanmsyarif.github.io/marrow/)**, built from `docs/index.html`.
+
 ## Install
 
 ```
