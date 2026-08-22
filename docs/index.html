@@ -8,422 +8,475 @@
 <title>Marrow Handbook</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Schibsted+Grotesk:wght@500;700&family=Spline+Sans+Mono:wght@400;500&display=swap">
 
 <style>
-/* ---------------------------------------------------------------
-   Marrow Handbook
-   Palette is taken from the addon's own false-colour stretch ramp:
-   cold teal where material is compressed, hot ember where it is
-   pulled past rest. Teal is the accent; ember is reserved for the
-   things that can actually ruin a shot.
-   --------------------------------------------------------------- */
+/* =============================================================
+   MARROW HANDBOOK — the anatomical plate
+   Ink is bone on a specimen ground. Ochre keys and leader lines
+   carry structure; carmine is injected, and marks only the four
+   things that ruin a shot. Nothing here is a colour by category.
+   ============================================================= */
 
 :root {
-  --bg:        #E9EDEC;
-  --surface:   #F6F8F7;
-  --surface-2: #DFE5E4;
-  --ink:       #101719;
-  --ink-2:     #4C5A5D;
-  --ink-3:     #748285;
-  --rule:      #CDD6D4;
-  --rule-soft: #DCE3E1;
-  --accent:    #0E6E76;
-  --accent-2:  #0A555C;
-  --accent-wash:#DCEBEB;
-  --hot:       #B23A15;
-  --hot-wash:  #F6E3DA;
-  --code-bg:   #E2E8E6;
-  --shadow:    0 1px 2px rgba(16,23,25,.06), 0 8px 24px -16px rgba(16,23,25,.28);
-}
+  --ground:      #0C110F;
+  --plate:       #121815;
+  --plate-2:     #182019;
+  --rule:        #26302B;
+  --rule-soft:   #1B2320;
+  --ink:         #E9E4D6;
+  --ink-2:       #A6AEA4;
+  --ink-3:       #828D86;
+  --ochre:       #D2A24C;
+  --ochre-dim:   #8A6C33;
+  --ochre-wash:  #1D1D14;
+  --carmine:     #DD6157;
+  --carmine-dim: #8E3A34;
+  --carmine-wash:#1E1210;
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg:        #0B1012;
-    --surface:   #121A1C;
-    --surface-2: #182225;
-    --ink:       #DEE6E4;
-    --ink-2:     #9AA9AA;
-    --ink-3:     #748285;
-    --rule:      #232F32;
-    --rule-soft: #1B2528;
-    --accent:    #52C2C6;
-    --accent-2:  #7FD6D8;
-    --accent-wash:#12292C;
-    --hot:       #EE7A50;
-    --hot-wash:  #2C1710;
-    --code-bg:   #0E1618;
-    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
-  }
-}
-
-:root[data-theme="dark"] {
-  --bg:        #0B1012;
-  --surface:   #121A1C;
-  --surface-2: #182225;
-  --ink:       #DEE6E4;
-  --ink-2:     #9AA9AA;
-  --ink-3:     #748285;
-  --rule:      #232F32;
-  --rule-soft: #1B2528;
-  --accent:    #52C2C6;
-  --accent-2:  #7FD6D8;
-  --accent-wash:#12292C;
-  --hot:       #EE7A50;
-  --hot-wash:  #2C1710;
-  --code-bg:   #0E1618;
-  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.7);
+  --measure: 68ch;
+  --display: "Schibsted Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --text: "Literata", Georgia, "Times New Roman", serif;
+  --data: "Spline Sans Mono", ui-monospace, "Courier New", monospace;
 }
 
 * { box-sizing: border-box; }
 
+html { scrollbar-color: var(--rule) var(--ground); }
+
 body {
   margin: 0;
-  background: var(--bg);
+  background: var(--ground);
   color: var(--ink);
-  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 16px;
-  line-height: 1.65;
+  font-family: var(--text);
+  font-size: 16.5px;
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
+  caret-color: var(--ochre);
 }
 
-/* ---- shell ---------------------------------------------------- */
+::selection { background: var(--ochre); color: var(--ground); }
 
-.shell {
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: var(--ground); }
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border: 3px solid var(--ground);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ochre-dim); }
+
+:focus-visible {
+  outline: 2px solid var(--ochre);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+/* ---- plate shell -------------------------------------------- */
+
+.sheet {
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  grid-template-columns: 264px minmax(0, 1fr);
   align-items: start;
-  max-width: 1320px;
+  max-width: 1340px;
   margin: 0 auto;
 }
 
-/* ---- sidebar -------------------------------------------------- */
+/* ---- the key rail -------------------------------------------
+   The plate's own legend: a hairline leader reaches from the rule
+   to the entry you are reading, the way a leader reaches a part. */
 
-.rail {
+.key {
   position: sticky;
   top: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 26px 20px 26px 28px;
+  gap: 20px;
+  padding: 30px 22px 26px 30px;
   border-right: 1px solid var(--rule);
-  background: var(--bg);
 }
 
-.brand {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
+.colophon {
+  display: block;
   text-decoration: none;
   color: inherit;
 }
 
-.brand-mark {
-  font-family: "Archivo", sans-serif;
+.colophon b {
+  display: block;
+  font-family: var(--display);
   font-weight: 700;
-  font-size: 22px;
-  letter-spacing: -.02em;
-  color: var(--ink);
+  font-size: 25px;
+  letter-spacing: -.025em;
+  line-height: 1;
 }
 
-.brand-ver {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent);
-  background: var(--accent-wash);
-  border-radius: 3px;
-  padding: 2px 6px;
-  letter-spacing: .02em;
+.colophon span {
+  display: block;
+  margin-top: 7px;
+  font-family: var(--data);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  letter-spacing: .04em;
 }
 
-.filter {
-  position: relative;
-}
+.sift { position: relative; }
 
-.filter input {
+.sift input {
   width: 100%;
-  font: 400 13px/1.4 "IBM Plex Mono", ui-monospace, monospace;
+  font: 400 13.5px/1.5 var(--display);
   color: var(--ink);
-  background: var(--surface);
+  background: var(--plate);
   border: 1px solid var(--rule);
-  border-radius: 5px;
-  padding: 8px 10px 8px 28px;
+  border-radius: 2px;
+  padding: 7px 10px 7px 30px;
 }
 
-.filter input::placeholder { color: var(--ink-3); }
+.sift input::placeholder { color: var(--ink-3); }
+.sift input:focus { border-color: var(--ochre-dim); }
 
-.filter input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-  border-color: transparent;
-}
-
-.filter svg {
+.sift svg {
   position: absolute;
-  left: 9px;
+  left: 10px;
   top: 50%;
   transform: translateY(-50%);
   width: 13px;
   height: 13px;
   stroke: var(--ink-3);
   fill: none;
-  stroke-width: 1.8;
+  stroke-width: 1.6;
   pointer-events: none;
 }
 
-.nav {
+.legend {
+  flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  flex: 1;
-  margin-right: -8px;
-  padding-right: 8px;
+  margin-right: -10px;
+  padding-right: 10px;
 }
 
-.nav-group + .nav-group { margin-top: 20px; }
+.limb + .limb { margin-top: 19px; }
 
-.nav-group > h4 {
-  margin: 0 0 6px;
-  font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .13em;
+.limb > h4 {
+  margin: 0 0 5px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .16em;
   text-transform: uppercase;
-  color: var(--ink-3);
+  color: var(--ochre-dim);
 }
 
-.nav a {
+.legend a {
   display: block;
-  padding: 4px 10px;
-  margin-left: -10px;
-  border-radius: 4px;
+  position: relative;
+  padding: 3px 0 3px 15px;
   color: var(--ink-2);
   text-decoration: none;
+  font-family: var(--display);
   font-size: 13.5px;
   line-height: 1.45;
-  border-left: 2px solid transparent;
 }
 
-.nav a:hover { color: var(--ink); background: var(--surface); }
-
-.nav a.on {
-  color: var(--accent);
-  font-weight: 600;
-  border-left-color: var(--accent);
-  background: var(--accent-wash);
+/* the leader: a hairline that reaches the entry it points at.
+   Scaled, not widened - a width transition thrashes layout. */
+.legend a::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--ochre);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform .18s cubic-bezier(.16,1,.3,1);
 }
 
-.nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.legend a:hover { color: var(--ink); }
+.legend a:hover::before { transform: scaleX(1); }
 
-.rail-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.legend a.at {
+  color: var(--ochre);
+  font-weight: 500;
+}
+
+.legend a.at::before { transform: scaleX(1); }
+
+.key-foot {
   border-top: 1px solid var(--rule);
-  padding-top: 12px;
-  font: 400 11.5px/1.4 "IBM Plex Mono", ui-monospace, monospace;
+  padding-top: 13px;
+  font-family: var(--data);
+  font-size: 11px;
+  line-height: 1.7;
   color: var(--ink-3);
 }
 
-.rail-foot a { color: var(--ink-3); }
+.key-foot a { color: var(--ink-3); }
 
-.theme-btn {
-  font: inherit;
-  color: var(--ink-2);
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-}
-
-.theme-btn:hover { color: var(--ink); border-color: var(--ink-3); }
-.theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* ---- main ----------------------------------------------------- */
+/* ---- the sheet ---------------------------------------------- */
 
 main {
   min-width: 0;
-  padding: 0 clamp(20px, 4vw, 64px) 140px;
+  padding: 0 clamp(22px, 4.2vw, 70px) 150px;
 }
 
-.masthead {
-  padding: 56px 0 40px;
-  border-bottom: 1px solid var(--rule);
-  margin-bottom: 8px;
-}
-
-.eyebrow {
-  font: 500 11px/1 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .15em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin: 0 0 16px;
-}
+.frontispiece { padding: 46px 0 8px; }
 
 h1 {
-  font-family: "Archivo", sans-serif;
+  font-family: var(--display);
   font-weight: 700;
-  font-size: clamp(38px, 5.4vw, 58px);
-  line-height: 1.02;
-  letter-spacing: -.033em;
-  margin: 0 0 18px;
+  font-size: clamp(52px, 8.5vw, 96px);
+  line-height: .92;
+  letter-spacing: -.04em;
+  margin: 0;
+}
+
+.thesis {
+  font-size: clamp(19px, 2.2vw, 24px);
+  line-height: 1.42;
+  color: var(--ink);
+  max-width: 26ch;
+  margin: 18px 0 0;
   text-wrap: balance;
-  max-width: 16ch;
 }
 
-.standfirst {
-  font-size: 18.5px;
-  line-height: 1.55;
+.sub {
+  font-size: 16px;
+  line-height: 1.68;
   color: var(--ink-2);
-  max-width: 62ch;
-  margin: 0;
+  max-width: 60ch;
+  margin: 18px 0 0;
 }
 
-.standfirst strong { color: var(--ink); font-weight: 600; }
+.sub em { color: var(--ochre); font-style: normal; }
 
-#lattice {
-  display: block;
-  width: 100%;
-  height: 168px;
-  margin: 34px 0 26px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--surface);
+/* ---- plates -------------------------------------------------- */
+
+figure.plate {
+  margin: 34px 0;
+  max-width: none;
 }
 
-.lattice-cap {
-  font: 400 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace;
-  color: var(--ink-3);
-  margin: -14px 0 0;
+.plate-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 14px;
 }
 
-.facts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  overflow: hidden;
-  margin-top: 30px;
+.plate-no {
+  font-family: var(--data);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .16em;
+  color: var(--ochre);
+  white-space: nowrap;
 }
 
-.fact {
-  background: var(--surface);
-  padding: 14px 16px;
-}
-
-.fact dt {
-  font: 500 10px/1 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .12em;
+.plate-title {
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .15em;
   text-transform: uppercase;
-  color: var(--ink-3);
-  margin-bottom: 7px;
+  color: var(--ink-2);
 }
 
-.fact dd {
+.plate-rig {
+  margin-left: auto;
+  font-family: var(--data);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: right;
+}
+
+figure.plate > figcaption {
+  margin-top: 11px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-3);
+  max-width: 62ch;
+}
+
+/* ---- figure I: the specimen ---------------------------------- */
+
+.specimen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 214px;
+  gap: 26px;
+  align-items: center;
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  padding: 18px 22px;
+}
+
+.specimen svg { width: 100%; height: auto; display: block; }
+
+.parts {
+  list-style: none;
   margin: 0;
-  font-family: "Archivo", sans-serif;
-  font-weight: 600;
-  font-size: 17px;
-  letter-spacing: -.01em;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.parts button {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 9px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 2px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.parts button:hover, .parts button.lit {
+  background: var(--ochre-wash);
+  color: var(--ink);
+}
+
+.parts .num {
+  font-family: var(--data);
+  font-size: 11.5px;
+  color: var(--ochre);
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- sections ------------------------------------------------- */
+.parts .term {
+  font-style: italic;
+  color: var(--ink);
+  font-weight: 600;
+}
 
-section { scroll-margin-top: 20px; }
+.parts .gloss { display: block; font-style: normal; color: var(--ink-3); font-size: 12.5px; }
 
-section > * { max-width: 74ch; }
+/* dimming is applied to the figure, never to the key */
+.specimen svg .part { transition: opacity .16s ease-out; }
+.specimen.focusing svg .part { opacity: .22; }
+.specimen.focusing svg .part.lit { opacity: 1; }
+
+.leader { stroke: var(--ochre-dim); stroke-width: 1; fill: none; }
+.leader-no { font-family: var(--data); font-size: 12px; fill: var(--ochre); }
+
+/* ---- figure II: the wave ------------------------------------- */
+
+#wave {
+  display: block;
+  width: 100%;
+  height: 210px;
+  background: var(--plate);
+  border: 1px solid var(--rule);
+}
+
+/* ---- sections ------------------------------------------------ */
+
+section { scroll-margin-top: 16px; }
 
 h2 {
-  font-family: "Archivo", sans-serif;
+  font-family: var(--display);
   font-weight: 700;
-  font-size: 29px;
-  letter-spacing: -.021em;
-  line-height: 1.15;
-  margin: 68px 0 4px;
-  padding-top: 22px;
-  border-top: 1px solid var(--rule-soft);
-  max-width: none;
+  font-size: clamp(26px, 3.1vw, 34px);
+  letter-spacing: -.025em;
+  line-height: 1.1;
+  margin: 76px 0 6px;
+  padding-top: 26px;
+  border-top: 1px solid var(--rule);
   text-wrap: balance;
 }
 
-h2:first-of-type { border-top: 0; }
-
 h3 {
-  font-family: "Archivo", sans-serif;
-  font-weight: 600;
-  font-size: 19.5px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 19px;
   letter-spacing: -.012em;
-  margin: 40px 0 2px;
+  margin: 42px 0 2px;
+  color: var(--ink);
   text-wrap: balance;
 }
 
 h4 {
-  font: 600 12px/1 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .1em;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .15em;
   text-transform: uppercase;
-  color: var(--ink-2);
-  margin: 32px 0 -2px;
+  color: var(--ochre-dim);
+  margin: 34px 0 -4px;
 }
 
-p { margin: 14px 0; max-width: 70ch; }
+p { margin: 15px 0; max-width: var(--measure); }
 
-a { color: var(--accent); text-underline-offset: 2px; text-decoration-thickness: 1px; }
-a:hover { color: var(--accent-2); }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+a {
+  color: var(--ochre);
+  text-decoration-color: var(--ochre-dim);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+a:hover { text-decoration-color: var(--ochre); }
 
 strong { font-weight: 600; color: var(--ink); }
+em { font-style: italic; }
 
-ul, ol { margin: 14px 0; padding-left: 22px; max-width: 70ch; }
-li { margin: 7px 0; }
-li::marker { color: var(--ink-3); }
+ul, ol { margin: 15px 0; padding-left: 20px; max-width: var(--measure); }
+li { margin: 8px 0; }
+li::marker { color: var(--ochre-dim); }
 
 code {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: .88em;
-  background: var(--code-bg);
-  border-radius: 3px;
+  font-family: var(--data);
+  font-size: .86em;
+  color: var(--ink);
+  background: var(--plate-2);
+  border-radius: 2px;
   padding: 1px 5px;
 }
 
 pre {
-  background: var(--code-bg);
+  background: var(--plate);
   border: 1px solid var(--rule);
-  border-radius: 6px;
-  padding: 14px 16px;
+  border-left: 1px solid var(--ochre-dim);
+  padding: 15px 18px;
   overflow-x: auto;
-  margin: 18px 0;
-  max-width: 74ch;
+  margin: 20px 0;
+  max-width: var(--measure);
 }
 
 pre code {
   background: none;
   padding: 0;
   font-size: 13px;
-  line-height: 1.7;
-  color: var(--ink);
+  line-height: 1.75;
 }
 
 pre .c { color: var(--ink-3); }
 
-/* ---- tables --------------------------------------------------- */
+/* ---- specimen tables ----------------------------------------- */
 
 .tw {
   overflow-x: auto;
-  margin: 20px 0;
+  background: var(--plate);
   border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--surface);
-  max-width: none;
 }
 
 table {
   border-collapse: collapse;
   width: 100%;
   font-size: 14px;
+  font-family: var(--display);
 }
 
 th, td {
@@ -434,118 +487,91 @@ th, td {
 }
 
 thead th {
-  font: 600 10.5px/1.3 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .1em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .13em;
   text-transform: uppercase;
   color: var(--ink-3);
-  background: var(--surface-2);
+  background: var(--plate-2);
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
 }
 
 tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--plate-2); }
 
-td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-
-table.num tbody td:not(:first-child) {
+td.n, th.n {
+  text-align: right;
+  font-family: var(--data);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-td strong { white-space: nowrap; }
+.tw.free { margin: 22px 0; max-width: none; }
 
-.setting td:first-child {
-  white-space: nowrap;
-  font-weight: 600;
-  width: 1%;
-}
+.setting td:first-child { white-space: nowrap; font-weight: 700; width: 1%; }
 
-/* ---- measured block ------------------------------------------- */
-/* Every number in this project came off a card or an oracle. The
-   block says which, because that is the actual through-line of the
-   documentation and not a decoration. */
+/* ---- diagnostic key ------------------------------------------ */
 
-.measured {
+.dichotomy td:first-child { width: 40%; font-weight: 600; color: var(--ink); }
+.dichotomy td:nth-child(2) { color: var(--ink-2); }
+.dichotomy td:last-child { white-space: nowrap; width: 1%; }
+.dichotomy a { font-family: var(--display); }
+
+/* ---- marginalia and hazards ---------------------------------- */
+
+.aside, .hazard {
   margin: 26px 0;
-  max-width: none;
-}
-
-.measured > figcaption {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font: 400 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace;
-  color: var(--ink-3);
-  margin-bottom: 8px;
-}
-
-.measured > figcaption b {
-  font-weight: 600;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  font-size: 10px;
-  color: var(--accent);
-  border-bottom: 1px solid var(--accent);
-  padding-bottom: 1px;
-  flex: none;
-}
-
-.measured .tw { margin: 0; }
-
-/* ---- callouts ------------------------------------------------- */
-
-.note, .warn {
-  margin: 24px 0;
-  padding: 14px 18px;
-  border-radius: 6px;
+  max-width: var(--measure);
+  padding: 15px 18px;
+  background: var(--plate);
   border: 1px solid var(--rule);
-  background: var(--surface);
-  max-width: 72ch;
 }
 
-.warn {
-  border-color: var(--hot);
-  background: var(--hot-wash);
+.hazard {
+  background: var(--carmine-wash);
+  border-color: var(--carmine-dim);
 }
 
-.note > .lab, .warn > .lab {
-  display: block;
-  font: 600 10px/1 "IBM Plex Mono", ui-monospace, monospace;
-  letter-spacing: .13em;
+.aside > .lab, .hazard > .lab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--display);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .15em;
   text-transform: uppercase;
-  margin-bottom: 8px;
+  margin-bottom: 9px;
   color: var(--ink-3);
 }
 
-.warn > .lab { color: var(--hot); }
+.hazard > .lab { color: var(--carmine); }
+.aside > .lab svg, .hazard > .lab svg { flex: none; }
 
-.note p:first-of-type, .warn p:first-of-type { margin-top: 0; }
-.note p:last-child, .warn p:last-child { margin-bottom: 0; }
+.aside p:first-of-type, .hazard p:first-of-type { margin-top: 0; }
+.aside p:last-child, .hazard p:last-child { margin-bottom: 0; }
+.hazard strong { color: var(--carmine); }
 
-/* ---- misc ----------------------------------------------------- */
+/* ---- misc ---------------------------------------------------- */
 
-.lede {
-  font-size: 17px;
-  color: var(--ink-2);
-  max-width: 66ch;
-  margin: 14px 0 4px;
-}
+.lede { font-size: 17px; color: var(--ink-2); max-width: 64ch; }
 
 .steps {
   counter-reset: s;
   list-style: none;
   padding: 0;
-  margin: 20px 0;
+  margin: 22px 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 70ch;
+  gap: 13px;
+  max-width: var(--measure);
 }
 
 .steps li {
   counter-increment: s;
   position: relative;
-  padding-left: 38px;
+  padding-left: 34px;
   margin: 0;
 }
 
@@ -553,122 +579,140 @@ td strong { white-space: nowrap; }
   content: counter(s);
   position: absolute;
   left: 0;
-  top: 1px;
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  font: 600 12px/1 "IBM Plex Mono", ui-monospace, monospace;
-  color: var(--accent);
+  top: 3px;
+  font-family: var(--data);
+  font-size: 12px;
+  color: var(--ochre);
+  border-bottom: 1px solid var(--ochre-dim);
+  padding: 0 4px 1px;
 }
 
-.limits {
-  list-style: none;
-  padding: 0;
-  max-width: 72ch;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
+.limits { list-style: none; padding: 0; max-width: var(--measure); }
 
 .limits li {
   margin: 0;
-  padding: 13px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--rule-soft);
 }
 
 .limits li:last-child { border-bottom: 0; }
 
 footer {
-  margin-top: 80px;
+  margin-top: 84px;
   padding-top: 22px;
   border-top: 1px solid var(--rule);
-  font: 400 13px/1.7 "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--data);
+  font-size: 12.5px;
+  line-height: 1.85;
   color: var(--ink-3);
-  max-width: none;
 }
 
-/* ---- mobile --------------------------------------------------- */
+/* ---- narrow -------------------------------------------------- */
 
-.railtoggle {
+.open-key {
   display: none;
   position: sticky;
   top: 0;
   z-index: 20;
   width: 100%;
   align-items: center;
-  gap: 10px;
-  padding: 11px clamp(20px, 4vw, 64px);
-  background: var(--bg);
+  gap: 9px;
+  padding: 12px clamp(22px, 4.2vw, 70px);
+  background: var(--ground);
   border-bottom: 1px solid var(--rule);
-  font: 500 13px/1 "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
   color: var(--ink);
   cursor: pointer;
 }
 
-@media (max-width: 900px) {
-  .shell { grid-template-columns: minmax(0, 1fr); }
-  .railtoggle { display: flex; }
-  .rail {
+@media (max-width: 940px) {
+  .sheet { grid-template-columns: minmax(0, 1fr); }
+  .open-key { display: flex; }
+  .key {
     position: static;
     height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--rule);
-    padding: 20px clamp(20px, 4vw, 64px) 24px;
+    padding: 22px clamp(22px, 4.2vw, 70px) 26px;
   }
-  .rail[hidden] { display: none; }
-  .nav { overflow: visible; max-height: none; }
-  .masthead { padding-top: 34px; }
-  main { padding-bottom: 90px; }
+  .key[hidden] { display: none; }
+  .legend { overflow: visible; }
+  .specimen { grid-template-columns: minmax(0, 1fr); }
+  .frontispiece { padding-top: 30px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  *, *::before { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
 </style>
 </head>
 <body>
-<button class="railtoggle" id="railtoggle" aria-expanded="false" aria-controls="rail">
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
-  Contents
+<!--
+  THESIS: Marrow's documentation is a dissection, not a manual. The reader
+  arrives mid-shot with a symptom, so the sheet opens on the body cut open
+  and a diagnostic key, refusing the sidebar-plus-hero docs template.
+  OWN-WORLD: specimen-jar green-black ground; bone ink; ochre keys, leader
+  lines and rules; carmine injected only where a shot is ruined. Schibsted
+  Grotesk labels, Literata body, Spline Sans Mono for measurement alone.
+  Plates numbered I onward, each naming its rig.
+  STORY: the reader believes every number was measured, finds the symptom
+  in the key, and reaches the paragraph that explains it.
+  FIRST VIEWPORT: Plate I at full column width, skin opened to the lattice
+  with five numbered leader lines into a keyed legend; the wordmark at 96px
+  above it; the diagnostic key immediately under.
+  FORM: The Anatomical Plate, candidate 1 of the ordered grounded list,
+  taken by the user from the pick card. Seed key 1aefbc06.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with
+  the finish review, the verdict, DESIGN.md, and every shipping raster
+  carrying its provenance.
+-->
+
+<button class="open-key" id="openkey" aria-expanded="false" aria-controls="key">
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+  Key
 </button>
 
-<div class="shell">
+<div class="sheet">
 
-  <aside class="rail" id="rail">
-    <a class="brand" href="#top">
-      <span class="brand-mark">Marrow</span>
-      <span class="brand-ver">2.5.0</span>
+  <aside class="key" id="key">
+    <a class="colophon" href="#top">
+      <b>Marrow</b>
+      <span>2.5.0 · Blender 5.2</span>
     </a>
 
-    <div class="filter">
+    <div class="sift">
       <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
-      <input id="q" type="search" placeholder="Filter sections" aria-label="Filter sections">
+      <input id="q" type="search" placeholder="Sift the key" aria-label="Sift the key">
     </div>
 
-    <nav class="nav" id="nav" aria-label="Documentation">
-      <div class="nav-group">
-        <h4>Start</h4>
+    <nav class="legend" id="legend" aria-label="Contents">
+      <div class="limb">
+        <h4>Diagnosis</h4>
+        <a href="#key-table">Diagnostic key</a>
+      </div>
+      <div class="limb">
+        <h4>Preparation</h4>
         <a href="#what">What Marrow is</a>
         <a href="#install">Install</a>
         <a href="#quickstart">Quick start</a>
         <a href="#undo">Getting your object back</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>The cage</h4>
         <a href="#coverage">Cage coverage</a>
         <a href="#liveorbake">Live or Bake</a>
         <a href="#diskcache">Baked caches on disk</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Reference</h4>
         <a href="#settings">Every setting</a>
         <a href="#mass">Mass and density</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Contact</h4>
         <a href="#colliders">Colliders</a>
         <a href="#friction">Friction</a>
@@ -677,33 +721,33 @@ footer {
         <a href="#twobodies">Colliding two bodies</a>
         <a href="#ground">Ground plane</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Material</h4>
         <a href="#failure">Failure</a>
         <a href="#regions">Per-region stiffness</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Motion</h4>
         <a href="#fiber">Fiber</a>
         <a href="#bending">Bending</a>
         <a href="#fields">Gravity and force fields</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Rigging</h4>
         <a href="#attachment">Attachment</a>
         <a href="#pinning">Pinning</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Display</h4>
         <a href="#falsecolor">False color</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Internals</h4>
         <a href="#howitworks">How it works</a>
         <a href="#longruns">Long runs</a>
-        <a href="#gpu">A note on GPU reliability</a>
+        <a href="#gpu">GPU reliability</a>
       </div>
-      <div class="nav-group">
+      <div class="limb">
         <h4>Appendix</h4>
         <a href="#limitations">Limitations</a>
         <a href="#development">Development</a>
@@ -711,34 +755,135 @@ footer {
       </div>
     </nav>
 
-    <div class="rail-foot">
-      <span>GPL-3.0-or-later</span>
-      <button class="theme-btn" id="theme" type="button">Theme</button>
-    </div>
+    <p class="key-foot">
+      GPL-3.0-or-later<br>
+      <a href="https://github.com/alanmsyarif/marrow">github.com/alanmsyarif/marrow</a>
+    </p>
   </aside>
 
   <main id="top">
 
-    <header class="masthead">
-      <p class="eyebrow">Blender 5.2 extension</p>
-      <h1>GPU tetrahedral soft body</h1>
-      <p class="standfirst">Marrow fills a mesh with a tetrahedral cage, solves a <strong>stable neo-Hookean XPBD</strong> system in GLSL compute shaders, and deforms the original render mesh by barycentric interpolation from that cage. Pure Python against Blender's bundled interpreter: no compiled extension, no external dependency, no per-platform build.</p>
+    <header class="frontispiece">
+      <h1>Marrow</h1>
+      <p class="thesis">A soft body with a lattice inside it, and no marks left on your mesh.</p>
+      <p class="sub">Marrow fills a mesh with a tetrahedral cage, solves a stable neo-Hookean XPBD system in GLSL compute shaders, and deforms the original render mesh by barycentric interpolation from that cage. Blender 5.2 ships XPBD for hair, cloth and particles and has <em>no volumetric soft body</em>; the legacy <code>SOFT_BODY</code> modifier is a surface spring lattice with no volume preservation.</p>
 
-      <canvas id="lattice" aria-label="A tetrahedral cage running a travelling fiber contraction, shaded by stretch"></canvas>
-      <p class="lattice-cap">Fiber wave on a cage, shaded the way False Color shades it — cold where compressed, hot where pulled past rest.</p>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;I</span>
+          <span class="plate-title">The body in section</span>
+          <span class="plate-rig">hover a term</span>
+        </div>
+        <div class="specimen" id="specimen">
+          <svg viewBox="0 0 640 330" role="img" aria-label="A soft body cut open to show the tetrahedral cage inside it, with five numbered parts.">
+            <defs>
+              <!-- cube-split lattice with checkerboard parity: the cage's
+                   actual construction, tiled rather than hand-plotted -->
+              <pattern id="lat" width="72" height="72" patternUnits="userSpaceOnUse">
+                <path d="M0 0H72M0 36H72M0 72H72M0 0V72M36 0V72M72 0V72"
+                      stroke="#8A6C33" stroke-width=".7" fill="none" opacity=".55"/>
+                <path d="M0 0L36 36M36 72L72 36M0 72L36 36M36 0L72 36"
+                      stroke="#8A6C33" stroke-width=".7" fill="none" opacity=".38"/>
+              </pattern>
+              <clipPath id="body">
+                <path d="M104 168c0-58 44-104 116-112 62-7 96 16 140 16 46 0 74-26 126-16 56 11 82 54 82 112 0 60-30 106-88 116-48 8-78-12-126-12-44 0-70 22-124 14-72-11-126-58-126-118Z"/>
+              </clipPath>
+            </defs>
 
-      <dl class="facts">
-        <div class="fact"><dt>Live frame</dt><dd>1&ndash;2 ms</dd></div>
-        <div class="fact"><dt>Cage nodes</dt><dd>125 &ndash; 2,744</dd></div>
-        <div class="fact"><dt>Solve kernels</dt><dd>6 GLSL</dd></div>
-        <div class="fact"><dt>Test oracle</dt><dd>numpy, 2e-5</dd></div>
-      </dl>
+            <!-- 5 · vacuum: a cell whose centre fell outside, kept only
+                 because a mesh vertex lives in it -->
+            <g class="part" id="p5">
+              <rect x="500" y="60" width="36" height="36" fill="none"
+                    stroke="#DD6157" stroke-width="1.2" stroke-dasharray="3 3"/>
+              <circle cx="518" cy="78" r="1.8" fill="#DD6157"/>
+            </g>
+
+            <!-- 1 · cutis: the render skin -->
+            <g class="part" id="p1">
+              <path d="M104 168c0-58 44-104 116-112 62-7 96 16 140 16 46 0 74-26 126-16 56 11 82 54 82 112 0 60-30 106-88 116-48 8-78-12-126-12-44 0-70 22-124 14-72-11-126-58-126-118Z"
+                    fill="#121815" stroke="#E9E4D6" stroke-width="1.6"/>
+            </g>
+
+            <!-- 2 · the lattice, clipped to the body -->
+            <g class="part" id="p2" clip-path="url(#body)">
+              <rect x="90" y="40" width="500" height="270" fill="url(#lat)"/>
+            </g>
+
+            <!-- 3 · tetra: one solved element -->
+            <g class="part" id="p3">
+              <path d="M252 132 288 132 270 168Z" fill="#D2A24C" fill-opacity=".28"
+                    stroke="#D2A24C" stroke-width="1.3"/>
+              <circle cx="252" cy="132" r="2.6" fill="#D2A24C"/>
+              <circle cx="288" cy="132" r="2.6" fill="#D2A24C"/>
+              <circle cx="270" cy="168" r="2.6" fill="#D2A24C"/>
+            </g>
+
+            <!-- 4 · fibra: the baked contraction axis -->
+            <g class="part" id="p4">
+              <path d="M150 214C240 246 330 178 420 208c60 20 90 4 128-18"
+                    stroke="#DD6157" stroke-width="1.7" fill="none" stroke-dasharray="7 5"/>
+              <path d="M541 187l7 3-6 5" stroke="#DD6157" stroke-width="1.7" fill="none"/>
+            </g>
+
+            <!-- leaders -->
+            <g class="leaders" aria-hidden="true">
+              <path class="leader" d="M330 44 330 60"/>
+              <text class="leader-no" x="326" y="38">1</text>
+              <path class="leader" d="M180 300 180 262"/>
+              <text class="leader-no" x="176" y="315">2</text>
+              <path class="leader" d="M270 106 270 128"/>
+              <text class="leader-no" x="266" y="100">3</text>
+              <path class="leader" d="M300 268 300 216"/>
+              <text class="leader-no" x="296" y="283">4</text>
+              <path class="leader" d="M518 44 518 58"/>
+              <text class="leader-no" x="514" y="38">5</text>
+            </g>
+          </svg>
+
+          <ul class="parts" id="parts">
+            <li><button type="button" data-part="p1"><span class="num">1</span><span><span class="term">cutis</span><span class="gloss">the render skin — bound, never solved</span></span></button></li>
+            <li><button type="button" data-part="p2"><span class="num">2</span><span><span class="term">craticula</span><span class="gloss">the cage: cube-split lattice, checkerboard parity</span></span></button></li>
+            <li><button type="button" data-part="p3"><span class="num">3</span><span><span class="term">tetra</span><span class="gloss">four nodes, one deviatoric and one volume constraint</span></span></button></li>
+            <li><button type="button" data-part="p4"><span class="num">4</span><span><span class="term">fibra</span><span class="gloss">the baked contraction axis, sampled from a curve</span></span></button></li>
+            <li><button type="button" data-part="p5"><span class="num">5</span><span><span class="term">vacuum</span><span class="gloss">a cell whose centre fell outside, kept for its vertex</span></span></button></li>
+          </ul>
+        </div>
+        <figcaption>The cage is a separate hidden object. Marrow never modifies your topology, which is what keeps UVs, shape keys and material slots intact — and why De-tetrahedralize returns the mesh you modelled, bit for bit.</figcaption>
+      </figure>
     </header>
+
+    <section id="key-table">
+      <h2>Diagnostic key</h2>
+      <p class="lede">Find the symptom. The reading is what the solver is actually doing.</p>
+      <div class="tw free">
+        <table class="dichotomy">
+          <thead><tr><th>Symptom</th><th>Reading</th><th>Turn to</th></tr></thead>
+          <tbody>
+            <tr><td>A tentacle tip or fingertip stretches into a spike</td><td>Those render vertices have no tet of their own and are clipped onto the nearest one</td><td><a href="#coverage">Cage coverage</a></td></tr>
+            <tr><td>The body turns inside out on the first frame</td><td>It started overlapping a sticky collider; buried nodes were seized and welded to scattered faces</td><td><a href="#sticky">Sticky colliders</a></td></tr>
+            <tr><td>The body launches violently at the start</td><td>It started below the ground plane. A straddling ball left its first substep at 226 m/s</td><td><a href="#ground">Ground plane</a></td></tr>
+            <tr><td>Fibers refuse to bake, and nothing says why</td><td>The curve has a bevel or <code>Cyclic U</code>, so it resolves to a tube or a ring, not one open path</td><td><a href="#fiber">Fiber</a></td></tr>
+            <tr><td>The wave reads like clockwork</td><td>Noise is at 0, which is the exact periodic wave</td><td><a href="#fiber">Noise</a></td></tr>
+            <tr><td>The body squeezes but will not bend</td><td>Bend is at 0, so the whole cross-section contracts together</td><td><a href="#bending">Bending</a></td></tr>
+            <tr><td>Stiffness Group has no effect</td><td>The solver rebuilds on a return to the start frame, not on the edit</td><td><a href="#regions">Per-region stiffness</a></td></tr>
+            <tr><td>The body simulates where the object used to be</td><td>The cage is built in a world frame; it rebases on the next rebuild</td><td><a href="#pinning">Moving the object</a></td></tr>
+            <tr><td>Marrow refuses to restart after a scale</td><td>Resizing the cage under an older rest shape would change mass and what Stiffness means</td><td><a href="#pinning">Moving the object</a></td></tr>
+            <tr><td>The mesh is deformed twice, or trails a spike</td><td>A Hook or Armature is still shown; modifiers are muted only while Attachment is on</td><td><a href="#attachment">Attachment</a></td></tr>
+            <tr><td>A pinned region will not follow its Empty</td><td>Follows Animation is off, or Attach Stiffness is above 0 and holding the body back</td><td><a href="#pinning">Follows Animation</a></td></tr>
+            <tr><td>Material fails under a press you wanted intact</td><td>A volume-preserving squash stretches sideways, and lateral stretch counts</td><td><a href="#failure">Failure</a></td></tr>
+            <tr><td>A bake is gone after reopening the file</td><td>The mesh was edited or re-tetrahedralized, so the cache no longer fits and was refused</td><td><a href="#diskcache">Baked caches</a></td></tr>
+            <tr><td>The body passes through itself where it folds</td><td>Self Collision is off, or Thickness is below about 1.0 and folds slip between nodes</td><td><a href="#selfcollision">Self collision</a></td></tr>
+            <tr><td>The body sinks into a collider that deforms</td><td>A deforming collider is captured once at the start and never re-baked</td><td><a href="#colliders">Colliders</a></td></tr>
+            <tr><td>Every GPU test in the suite fails</td><td>The suite was pointed at Blender 4.5, which has no GPU context in background mode</td><td><a href="#development">Development</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <section id="what">
       <h2>What Marrow is</h2>
-      <p>Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric soft body; the legacy <code>SOFT_BODY</code> modifier is a surface spring lattice with no volume preservation. Marrow fills that gap.</p>
-      <p>It never modifies your topology. The cage is a separate hidden object, and the render mesh is deformed by interpolation from it — so UVs, shape keys and material slots come through untouched, and <strong>De-tetrahedralize</strong> gives you back the mesh you modelled, bit for bit.</p>
+      <p>Pure Python against Blender's bundled interpreter, with no compiled extension, no external dependency and no per-platform build.</p>
+      <p>The cage is a separate hidden object, and the render mesh is deformed by interpolation from it — so UVs, shape keys and material slots come through untouched, and <strong>De-tetrahedralize</strong> gives you back the mesh you modelled, bit for bit.</p>
     </section>
 
     <section id="install">
@@ -765,8 +910,8 @@ footer {
       <h2>Getting your object back</h2>
       <p><strong>De-tetrahedralize</strong>, in the Cage box, restores the shape you modelled, deletes the cage, strips every attribute Marrow wrote and releases the session. The mesh comes back bit-identical.</p>
       <p>It works because Tetrahedralize records the rest shape in a <code>marrow_rest</code> attribute first. That also means re-tetrahedralizing after playing the timeline rebuilds from the original shape rather than from the deformed pose, so changing Resolution mid-project is safe.</p>
-      <div class="note">
-        <span class="lab">Not the same thing</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>Not the same operation</span>
         <p><strong>Free Bake is not De-tetrahedralize.</strong> Free Bake discards the cache and the GPU memory and leaves the object tetrahedralised and deformed, ready to simulate again.</p>
       </div>
       <p>Editing the mesh's topology between the two invalidates the stored shape, since the attribute is per-point. Re-tetrahedralize after any Edit Mode change.</p>
@@ -775,12 +920,16 @@ footer {
     <section id="coverage">
       <h2>Cage coverage</h2>
       <p>The cage keeps a cell when its <strong>centre</strong> is inside the mesh — and that alone loses anything thinner than a cell. A tentacle tip, a fingertip, a horn: no cell centre ever lands inside one, so the cage stops short. Those render vertices get no tet of their own; binding clips them onto whichever tet was nearest and they ride it, which is what stretches a tip into a spike or collapses it to a point.</p>
-      <p>So cells holding a <strong>mesh vertex</strong> are kept too, whether or not their centre is inside. That covers a thin feature exactly where the mesh carries the detail to describe it, and it costs one pass over vertices the voxeliser has already loaded — no extra ray casts, no change in Resolution.</p>
+      <p>So cells holding a <strong>mesh vertex</strong> are kept too, whether or not their centre is inside — part <em>5</em> in Plate I. That covers a thin feature exactly where the mesh carries the detail to describe it, and it costs one pass over vertices the voxeliser has already loaded: no extra ray casts, no change in Resolution.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>Tet count, and the share of render vertices left outside the cage.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;II</span>
+          <span class="plate-title">Cage coverage, before and after vertex cells</span>
+          <span class="plate-rig">tets, and render vertices left outside</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Shape</th><th class="n">Resolution</th><th class="n">Tets before</th><th class="n">Tets after</th><th class="n">Cost</th><th class="n">Outside before</th><th class="n">Outside after</th></tr></thead>
             <tbody>
               <tr><td>Cube</td><td class="n">0.25</td><td class="n">2,560</td><td class="n">2,560</td><td class="n">0%</td><td class="n">0%</td><td class="n">0%</td></tr>
@@ -797,15 +946,15 @@ footer {
 
       <h3>The Adaptive cage is gone</h3>
       <p>This replaced an <strong>Adaptive</strong> octree cage that used to live in the Cage box. Its job was to spend fine cells only where a shape is thin, and vertex cells do that job for nothing — so it was measured against the uniform fill it was built to beat and lost on every axis. On a solid sphere at its own best settings it wanted 31,726 nodes against 23,871 for a uniform cage at the same surface size, took 5&times; as long to build, and left 49% of render vertices outside the cage because the octree never got vertex cells of its own. It is gone, along with the hanging-node blend pass that existed only to hold its cages together.</p>
-      <div class="warn">
-        <span class="lab">Refused, not silently simulated</span>
+      <div class="hazard">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 2 15 14H1Z"/><path d="M8 6.5v3.2"/><path d="M8 11.8v.2"/></svg>Refused, not silently simulated</span>
         <p>A .blend saved with an adaptive cage is <strong>refused with a message asking for a rebuild</strong> rather than simulated without that glue, which would quietly tear the cage apart. Existing cages keep the old behaviour until you Tetrahedralize again.</p>
       </div>
     </section>
 
     <section id="liveorbake">
       <h2>Live or Bake</h2>
-      <div class="tw">
+      <div class="tw free">
         <table>
           <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
           <tbody>
@@ -832,7 +981,7 @@ footer {
     <section id="settings">
       <h2>Every setting</h2>
       <p class="lede">The full panel, in panel order.</p>
-      <div class="tw">
+      <div class="tw free">
         <table class="setting">
           <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
           <tbody>
@@ -883,8 +1032,8 @@ footer {
       <p>Each collider carries its own <strong>Shape</strong>. <strong>Mesh</strong> is the default and uses the object's actual shape, so anything works — a bowl, a hand, a floor with a lip. <strong>Sphere</strong> and <strong>Box</strong> are cheaper and exactly round or square, for when the shape really is one.</p>
       <p>A mesh collider is baked once into a signed distance field, in the object's own local space. That means moving, rotating and scaling it costs nothing — the field rides the transform exactly as the primitives do. It also means concavity works properly: a node in the hole of a torus is correctly outside the solid, which a bounding box or a convex hull would get wrong.</p>
       <p>The field's grid tracks your <strong>Resolution</strong>, since it only needs to resolve detail the cage can represent. There is no separate setting.</p>
-      <div class="warn">
-        <span class="lab">Baked once</span>
+      <div class="hazard">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 2 15 14H1Z"/><path d="M8 6.5v3.2"/><path d="M8 11.8v.2"/></svg>Baked once</span>
         <p><strong>A deforming collider is not re-baked.</strong> Shape keys, an armature or Geometry Nodes on the collider are captured once when the simulation starts and never revisited. Transform animation is free; deformation is not.</p>
       </div>
 
@@ -903,8 +1052,8 @@ footer {
       <p>One coefficient covers both static and sliding friction. Below the limit the entire sideways step is given back and the material simply holds; above it the contact slips, at a rate the coefficient sets. The limit scales with how hard the contact is pressed, which is what makes it read as weight: the same slider grips harder under a heavy landing than a light touch.</p>
       <p>Friction is applied as a position correction inside the contact pass, from the correction that pass already computed — so it needs no separate normal, and no second pass. Both the ground plane and the collider primitives measure it against a collider held still for the substep. Self-collision and body-to-body measure the <em>pair</em>, so two parts of one body travelling together are not braked for merely touching.</p>
       <p><code>0</code> is the default everywhere and is bit-identical to having no friction at all, so nothing that was authored before this existed moves differently.</p>
-      <div class="note">
-        <span class="lab">Different things</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>Different mechanisms</span>
         <p><strong>Sticky is not friction.</strong> Friction resists sliding along a surface; Sticky welds material to it and drags it wherever the collider goes. A sticky collider ignores Friction entirely, and the panel greys the value out to say so.</p>
       </div>
     </section>
@@ -914,8 +1063,8 @@ footer {
       <p>The magnet toggle on a collider makes it <strong>sticky</strong>. Material that touches it is held to the surface and dragged along as the collider moves, instead of only being pushed out of it.</p>
       <p>Plain non-penetration can only push, so a collider that lifts away leaves the body behind. Sticky is what makes squash-and-stretch possible: press a plate into a blob, lift it, and the material is drawn up into a column. The contact point is recorded in the collider's own local space, so the anchor rides the animated transform for free and rotation and scale come along with it.</p>
       <p><strong>Stick Break</strong> is how far the material may drag a contact point before it lets go, in world units. Zero never lets go. There is no universal value: the distance a contact settles at depends on Stiffness and Substeps, so tune it against the shot.</p>
-      <div class="warn">
-        <span class="lab">Do not start overlapping a sticky collider</span>
+      <div class="hazard">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 2 15 14H1Z"/><path d="M8 6.5v3.2"/><path d="M8 11.8v.2"/></svg>Never start a body inside a sticky collider</span>
         <p>Every buried node is grabbed on the first frame and welded to whichever face happened to be nearest. They scatter across different faces and turn the body inside out. Measured on a sphere half-buried in a sticky box: <strong>219 of 461 nodes seized immediately</strong>, 12% of tets inverted, render mesh shredded.</p>
         <p>Move the collider clear at the start frame, or leave Sticky off. A collider that presses in <em>during</em> the simulation is fine, and is the intended way to set a stretch shot up.</p>
       </div>
@@ -925,10 +1074,14 @@ footer {
       <h2>Self collision</h2>
       <p>Off by default, because it is the second most expensive knob after Substeps.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>RTX 5050, cost per frame at 10 substeps.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;III</span>
+          <span class="plate-title">Self-collision, cost per frame</span>
+          <span class="plate-rig">RTX 5050 · 10 substeps</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Resolution</th><th class="n">Cage nodes</th><th class="n">Surface nodes</th><th class="n">Off</th><th class="n">On</th></tr></thead>
             <tbody>
               <tr><td>0.25</td><td class="n">461</td><td class="n">314</td><td class="n">1.9 ms</td><td class="n">3.0 ms</td></tr>
@@ -1000,15 +1153,26 @@ footer {
     <section id="fiber">
       <h2>Fiber</h2>
       <p>Every tet in Marrow is otherwise isotropic: it resists distortion equally in all directions. <strong>Fiber</strong> adds one direction that is different, and drives it — the tet is told to shorten along its fiber, and the volume-preservation constraint puts the material it displaces out sideways. That sideways bulge is what makes it read as a muscle instead of a shrinking rod.</p>
+
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;IV</span>
+          <span class="plate-title">The travelling contraction</span>
+          <span class="plate-rig">stretch shaded in this plate's ink</span>
+        </div>
+        <canvas id="wave" role="img" aria-label="A cage running a travelling fiber contraction: it shortens along the fiber, bulges sideways, and the two flanks run half a cycle apart."></canvas>
+        <figcaption>Contraction along the fiber, the volume-preserving bulge sideways, and the contralateral quarter cycle <a href="#bending">Bend</a> adds. Edges are shaded by their own stretch ratio, which is what <a href="#falsecolor">False Color</a> displays — in its own rainbow, not this plate's ink.</figcaption>
+      </figure>
+
       <p>Directions come from a <strong>Curve</strong> you point at the body. Each tet takes the tangent at the nearest point on that curve as its fiber direction, and the arclength at that point as its place in the wave, so the contraction travels from one end of the body to the other instead of the whole thing pulsing at once. Both are sampled at Tetrahedralize and frozen — a fiber direction is a property of the rest shape, so an animated curve has no meaning as a source. Change the curve and tetrahedralize again.</p>
 
-      <div class="note">
-        <span class="lab">Two passes</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>Two passes</span>
         <p><strong>Setting the curve takes two Tetrahedralize passes.</strong> The Curve field lives below the "Tetrahedralize to simulate" gate, so it does not exist until the object already has a cage. The flow is Tetrahedralize, then set Curve, then Tetrahedralize again — the first pass only builds the cage the field needs to appear on, and the second is the one that samples the curve and bakes fibers.</p>
       </div>
 
-      <div class="warn">
-        <span class="lab">Silent failure to know about</span>
+      <div class="hazard">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 2 15 14H1Z"/><path d="M8 6.5v3.2"/><path d="M8 11.8v.2"/></svg>A silent failure</span>
         <p><strong>A bevelled or cyclic curve bakes no fibers, and says nothing about it.</strong> The curve is evaluated to a polyline that must resolve to one open path: a bevel or extrude turns it into a tube, a cyclic curve into a ring, and neither has an unambiguous direction to hand a fiber. Either one bakes nothing, silently — the panel keeps reading "Tetrahedralize to bake fibers" exactly as if no curve had been set at all. If fibers refuse to bake, check the curve for a bevel or <code>Cyclic U</code> before looking anywhere else.</p>
       </div>
 
@@ -1019,10 +1183,14 @@ footer {
       <p><strong>Noise</strong> is what stops it looking like a machine. A pure travelling wave is periodic in space and in time: every crest arrives exactly one Wavelength after the last and squeezes exactly as hard, and nothing alive moves like that. Noise jitters both — when a crest arrives, and how deep it goes.</p>
       <p>The last column is the one that matters. An activation that depends only on <code>position &minus; speed &times; time</code> is a <strong>rigid</strong> travelling wave: one fixed profile sliding along the body, the same picture every frame. Making that profile wobbly does not help — it still slides unchanged, and still reads as clockwork. The number below is how far the body's shape at t&nbsp;=&nbsp;0.5&nbsp;s differs from its shape at t&nbsp;=&nbsp;0 slid along by the best possible amount. Near zero means rigid.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>Wavelength 2.0, Speed 1.0, one fixed point on the body.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;V</span>
+          <span class="plate-title">Noise against the rigid wave</span>
+          <span class="plate-rig">Wavelength 2.0 · Speed 1.0 · one fixed point</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Noise</th><th class="n">Beat interval</th><th class="n">Depth at the crest</th><th class="n">Rigid-shift residual</th></tr></thead>
             <tbody>
               <tr><td>0.00</td><td class="n">1.000 &plusmn; 0.000 s</td><td class="n">0.500 every time</td><td class="n">0.001</td></tr>
@@ -1039,10 +1207,14 @@ footer {
       <h4>It skews the pulse</h4>
       <p>A cosine crest eases in and eases out at exactly the same rate, and no muscle does that — it snaps into the contraction and drifts out of it. The warp that skews it is driven by its own field, so no two crests share a profile.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>Contraction time over release time, across 50-odd crests.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;VI</span>
+          <span class="plate-title">Contraction time over release time</span>
+          <span class="plate-rig">across 50-odd crests</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Noise</th><th class="n">Mean</th><th class="n">Range</th></tr></thead>
             <tbody>
               <tr><td>0.00</td><td class="n">1.000</td><td class="n">0.998 to 1.002</td></tr>
@@ -1056,10 +1228,14 @@ footer {
       <h4>It drifts the stroke rate</h4>
       <p>Everything above perturbs a crest — when it arrives, how hard it bites, what shape it is — and none of it touches the rhythm underneath. A travelling wave at a fixed Speed strikes the same pose again every 1/Speed seconds however each crest is dressed, and that is what still reads as repetition.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>Whole body correlated against itself, ignoring lags under two seconds.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;VII</span>
+          <span class="plate-title">Self-similarity over long lags</span>
+          <span class="plate-rig">whole body · lags under 2 s ignored</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Noise</th><th class="n">Repeats itself at</th><th class="n">Slowest stroke rate at Speed 1.2</th></tr></thead>
             <tbody>
               <tr><td>0.00</td><td class="n">0.94</td><td class="n">1.200 (metronome)</td></tr>
@@ -1082,8 +1258,8 @@ footer {
       <p>Real undulation is contralateral: one flank contracts while the other releases, and that pairing travels. <strong>Bend</strong> is how much of that the wave does. Each tet is baked with a signed lateral offset from the curve, and Bend offsets its place in the wave by that — a quarter cycle either way, so the two flanks end up half a cycle apart. Tets on the curve itself read zero and stay in phase with both, which is the right answer for the neutral axis of a bending body: it neither leads nor lags.</p>
       <p>Measured on a 6 m cylinder, gravity only, Bend 0 against Bend 1 with every other setting identical: <strong>peak vertex difference 0.46 m</strong>, rms 0.16 m. It is not a subtle knob.</p>
       <p><strong>Sideways is left and right</strong>, measured about the world's up axis, because that is the plane a body lying on the ground undulates in. A spine running straight up has no left or right in that plane, so those tets fall back to bending towards world +X — a tentacle standing on end still bends rather than silently going rigid.</p>
-      <div class="note">
-        <span class="lab">Old cages</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>Cages built before this</span>
         <p>The side is baked at Tetrahedralize alongside the direction and arclength, so <strong>a cage built before this existed has no side column and reads as unfibered.</strong> Tetrahedralize again to get one; the panel will keep saying "Tetrahedralize to bake fibers" until you do.</p>
       </div>
       <p>Set Bend to 0 for the muscle case — a bicep bulging along its own length wants the whole section contracting together, not one side leading the other.</p>
@@ -1095,7 +1271,7 @@ footer {
       <h2>Gravity and force fields</h2>
       <p><strong>Gravity comes from the scene.</strong> Marrow used to hardcode &minus;9.81 and ignore Scene Properties, so turning gravity off in the place every other Blender physics system reads it did nothing here. It now obeys both the direction and the switch, and the per-body <strong>Gravity</strong> multiplier rides on top: 0 makes one body weightless while the rest of the shot still falls, and a negative value falls upwards.</p>
       <p><strong>Force Fields</strong> takes a collection, the same way Colliders does. Every <strong>Force</strong>, <strong>Wind</strong>, <strong>Vortex</strong> and <strong>Turbulence</strong> object in it pushes the body, nested collections included, and their strength, falloff power and max distance are read from the field settings on each object rather than duplicated into the Marrow panel.</p>
-      <div class="tw">
+      <div class="tw free">
         <table>
           <thead><tr><th>Field</th><th>What it does</th></tr></thead>
           <tbody>
@@ -1107,8 +1283,8 @@ footer {
         </table>
       </div>
       <p>The panel reports how many objects in the collection actually drive the body, so a collection of the wrong field type says so instead of doing nothing quietly. Other field types are ignored: Blender exposes no way to ask it for the combined field at a point, so the supported ones are reimplemented against their documented falloff; Magnetic and the rest need models nothing here has, and guessing at one would be worse than skipping it.</p>
-      <div class="note">
-        <span class="lab">Not Blender's Perlin turbulence</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>Not Blender's Perlin turbulence</span>
         <p>Marrow's Turbulence is three octaves of sine read through oblique directions — a smooth swirling field that varies across the body, drifts with Flow and shifts with Seed, but <strong>will not match a particle sim driven by the same field object</strong>. That is a deliberate trade for correctness elsewhere: lattice noise has to floor a coordinate to an integer, and float32 on the card floors a value a hair either side of a lattice line differently from the float64 reference solver every kernel here is diffed against. A whole cell of difference against a 2e-5 tolerance would fail at random, so the fiber wave and this both use sines instead.</p>
       </div>
       <p>Fields are evaluated in the kernel, where the node actually is, from a texture holding three texels per field. An animated field costs one upload of a few pixels per frame however large the cage is — the cost does not scale with the body.</p>
@@ -1140,36 +1316,43 @@ footer {
       <h3>Follows Animation</h3>
       <p><strong>A pin holds; Attachment carries it.</strong> By default a pin is a <em>static</em> anchor, so hooking a pinned region to an Empty and moving it does nothing — the pin is exactly what the solver holds still, and the attachment kernel skips a node with no inverse mass. Tick <strong>Follows Animation</strong> and the pin rides the animation instead: still rigid, still outranking every collider, but driven rather than frozen.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>Cube with its top face hooked to an Empty moved 3.0 in X.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;VIII</span>
+          <span class="plate-title">A pinned face against a moving hook</span>
+          <span class="plate-rig">cube · Empty moved 3.0 in X</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Setup</th><th class="n">Top follows</th><th class="n">Bottom</th></tr></thead>
             <tbody>
               <tr><td>Pin Group only, no Attachment</td><td class="n">&minus;0.004</td><td class="n">0.102</td></tr>
               <tr><td>Attachment 0.5, no pin</td><td class="n">2.600</td><td class="n">0.929</td></tr>
               <tr><td>Pin + Attachment, Follows Animation <strong>off</strong></td><td class="n">0.240</td><td class="n">0.092</td></tr>
-              <tr><td>Pin + Attachment, Follows Animation <strong>on</strong></td><td class="n"><strong>2.874</strong></td><td class="n">0.815</td></tr>
+              <tr><td>Pin + Attachment, Follows Animation <strong>on</strong></td><td class="n">2.874</td><td class="n">0.815</td></tr>
             </tbody>
           </table>
         </div>
+        <figcaption>Row four is the shape you usually want: the pinned region tracks the hook almost exactly while the rest of the body lags and jiggles behind it. Row three is the trap — a static pin and Attachment fight each other, and the pin wins, dragging the whole thing back.</figcaption>
       </figure>
-
-      <p>Row 4 is the shape you usually want: the pinned region tracks the hook almost exactly while the rest of the body lags and jiggles behind it. Row 3 is the trap — a static pin and Attachment fight each other, and the pin wins, dragging the whole thing back.</p>
 
       <h4>Set Attach Stiffness to 0 to let a driven pin carry the body</h4>
       <p>This is the setting the mode is built for, and it is worth understanding why. Attachment aims <em>every</em> node at its evaluated position, and for material the animation does not reach, that aim is the rest pose — so the same pass that supplies a pin its target is otherwise nailing the rest of the body down. At 0 the pass runs for the pins alone and leaves the free material entirely to the simulation.</p>
 
-      <figure class="measured">
-        <figcaption><b>Measured</b><span>23,697-node cage; a 27-vertex painted region hooked to an Empty travelling 1.473.</span></figcaption>
+      <figure class="plate">
+        <div class="plate-head">
+          <span class="plate-no">PLATE&nbsp;IX</span>
+          <span class="plate-title">Releasing the attachment grip</span>
+          <span class="plate-rig">23,697-node cage · hook travelling 1.473</span>
+        </div>
         <div class="tw">
-          <table class="num">
+          <table>
             <thead><tr><th>Attach Stiffness</th><th class="n">Pin travel</th><th class="n">Body travel</th></tr></thead>
             <tbody>
               <tr><td>0.50</td><td class="n">1.473</td><td class="n">0.026</td></tr>
               <tr><td>0.05</td><td class="n">1.473</td><td class="n">0.040</td></tr>
               <tr><td>0.01</td><td class="n">1.473</td><td class="n">0.374</td></tr>
-              <tr><td><strong>0.00 (pins only)</strong></td><td class="n">1.473</td><td class="n"><strong>1.552</strong></td></tr>
+              <tr><td><strong>0.00 (pins only)</strong></td><td class="n">1.473</td><td class="n">1.552</td></tr>
             </tbody>
           </table>
         </div>
@@ -1179,8 +1362,8 @@ footer {
       <p>Use a stiffness above 0 only when you want the <em>whole</em> body to follow the animation with soft-body lag, which is what Attachment is for on its own. Mixing that with a driven pin fights itself.</p>
       <p><strong>Follows Animation needs Attachment on</strong>, because the attachment pass is where per-node targets come from; the checkbox greys out otherwise. Targets are sampled once per frame, the same treatment collider transforms get, so a driven pin reaches the frame's position on the first substep and holds.</p>
       <p>Leave Follows Animation <strong>off</strong> to nail a region in world space while an armature drives the rest — a foot planted on the floor while the body moves over it. That is the case the flag exists to preserve.</p>
-      <div class="note">
-        <span class="lab">One more reason to turn Attachment on</span>
+      <div class="aside">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 1.5 14.5 8 8 14.5 1.5 8Z"/></svg>One more reason to turn Attachment on</span>
         <p>Modifiers are only muted in the display while Attachment is on. With a pin alone, a Hook or Armature stays shown, so Marrow writes the simulation into the mesh and the modifier then bends that result a second time. The stretched spike this produces is display only — the simulation underneath is unharmed.</p>
       </div>
     </section>
@@ -1193,7 +1376,7 @@ footer {
 
     <section id="howitworks">
       <h2>How it works</h2>
-      <div class="tw">
+      <div class="tw free">
         <table>
           <thead><tr><th>Stage</th><th>Where</th></tr></thead>
           <tbody>
@@ -1206,7 +1389,7 @@ footer {
           </tbody>
         </table>
       </div>
-      <p>The cage uses a <strong>cube-split lattice with checkerboard parity</strong>, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so a model with deep concavities is filled more generously than it strictly needs.</p>
+      <p>The cage uses a <strong>cube-split lattice with checkerboard parity</strong>, not conforming Delaunay — part <em>2</em> in Plate I. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so a model with deep concavities is filled more generously than it strictly needs.</p>
       <p>Tets are graph-coloured at build time so each colour dispatches race-free with no atomics. Interior cage nodes never cross PCIe; only render vertices are read back.</p>
     </section>
 
@@ -1219,7 +1402,7 @@ footer {
     </section>
 
     <section id="gpu">
-      <h2>A note on GPU reliability</h2>
+      <h2>GPU reliability</h2>
       <p>Blender's Python GPU API exposes no memory barrier; <code>gpu.compute</code> offers only <code>dispatch</code>. Marrow works around this. Readbacks are verified against a generation mark stamped by the writing kernel, uploads are read back and confirmed, and the bind texture is re-checked before every dispatch because it has been observed losing its contents after a verified upload.</p>
       <p>When a repair happens Marrow says so on the console rather than staying quiet. If you see corrupt frames, please report them along with that console output.</p>
     </section>
@@ -1249,14 +1432,14 @@ footer {
 <span class="c"># assert-based runner; it exits non-zero on failure)</span>
 blender -b --factory-startup --python tests/blender/run_tests.py</code></pre>
 
-      <div class="warn">
-        <span class="lab">Run the Blender suite on 5.2</span>
+      <div class="hazard">
+        <span class="lab"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 2 15 14H1Z"/><path d="M8 6.5v3.2"/><path d="M8 11.8v.2"/></svg>Run the Blender suite on 5.2</span>
         <p>Check which binary you invoked. Background mode only has a GPU context from 5.2 on. Point this at 4.5 and every GPU test fails with <code>GPU functions for drawing are not available in background mode</code>, and a windowed 4.5 driven by <code>--python</code> at startup fails each readback with <code>StaleReadError: a RGBA32F upload never became visible</code>. Neither says anything about the code, and on a machine with several Blender versions installed it is an easy hour to lose.</p>
       </div>
 
       <p>The runner drives <strong>one Blender process per test module</strong>. Running everything in one process invented failures that were not there — contact modules passed alone and failed one to three a run after the other forty, with the failing set rotating, which is GPU resource pressure from every module holding solvers and textures in its globals for the whole run. With isolation, red means wrong.</p>
 
-      <div class="tw">
+      <div class="tw free">
         <table>
           <thead><tr><th>Invocation</th><th>What it does</th></tr></thead>
           <tbody>
@@ -1276,7 +1459,8 @@ blender -b --factory-startup --python tests/blender/run_tests.py</code></pre>
       <h2>Licence</h2>
       <p>GPL-3.0-or-later.</p>
       <footer>
-        Marrow 2.5.0 &nbsp;/&nbsp; Blender 5.2 &nbsp;/&nbsp; every number on this page was measured, not estimated.
+        Marrow 2.5.0 · Blender 5.2<br>
+        Every number on this sheet was measured, not estimated.
       </footer>
     </section>
 
@@ -1287,135 +1471,151 @@ blender -b --factory-startup --python tests/blender/run_tests.py</code></pre>
 (function () {
   "use strict";
 
-  /* ---- theme toggle -------------------------------------------- */
-  var root = document.documentElement;
-  var btn = document.getElementById("theme");
-  btn.addEventListener("click", function () {
-    var dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    var now = root.getAttribute("data-theme") || (dark ? "dark" : "light");
-    root.setAttribute("data-theme", now === "dark" ? "light" : "dark");
-  });
+  var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  /* ---- mobile contents drawer ---------------------------------- */
-  var rail = document.getElementById("rail");
-  var toggle = document.getElementById("railtoggle");
-  var narrow = matchMedia("(max-width: 900px)");
+  /* ---- the key, on narrow screens ------------------------------ */
+  var rail = document.getElementById("key");
+  var opener = document.getElementById("openkey");
+  var narrow = matchMedia("(max-width: 940px)");
 
   function syncRail() {
-    if (narrow.matches) {
-      rail.hidden = toggle.getAttribute("aria-expanded") !== "true";
-    } else {
-      rail.hidden = false;
-    }
+    rail.hidden = narrow.matches && opener.getAttribute("aria-expanded") !== "true";
   }
-  toggle.addEventListener("click", function () {
-    toggle.setAttribute("aria-expanded",
-      toggle.getAttribute("aria-expanded") === "true" ? "false" : "true");
+  opener.addEventListener("click", function () {
+    opener.setAttribute("aria-expanded",
+      opener.getAttribute("aria-expanded") === "true" ? "false" : "true");
     syncRail();
   });
   narrow.addEventListener("change", syncRail);
   syncRail();
 
-  /* ---- sidebar filter ------------------------------------------ */
+  /* ---- sifting the key ----------------------------------------- */
   var q = document.getElementById("q");
-  var groups = [].slice.call(document.querySelectorAll(".nav-group"));
+  var limbs = [].slice.call(document.querySelectorAll(".limb"));
   q.addEventListener("input", function () {
     var term = q.value.trim().toLowerCase();
-    groups.forEach(function (g) {
+    limbs.forEach(function (limb) {
       var hits = 0;
-      [].forEach.call(g.querySelectorAll("a"), function (a) {
+      [].forEach.call(limb.querySelectorAll("a"), function (a) {
         var hit = !term || a.textContent.toLowerCase().indexOf(term) !== -1;
         a.hidden = !hit;
         if (hit) hits++;
       });
-      g.hidden = hits === 0;
+      limb.hidden = hits === 0;
     });
   });
 
-  /* ---- scroll spy ---------------------------------------------- */
+  /* ---- the leader follows the section you are reading ----------- */
   var links = {};
-  [].forEach.call(document.querySelectorAll(".nav a[href^='#']"), function (a) {
+  [].forEach.call(document.querySelectorAll(".legend a[href^='#']"), function (a) {
     links[a.getAttribute("href").slice(1)] = a;
   });
-  var seen = {};
+  var visible = {};
+  var sections = [].slice.call(document.querySelectorAll("main section"));
   var spy = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) { seen[e.target.id] = e.isIntersecting; });
-    var current = null;
-    [].forEach.call(document.querySelectorAll("main section"), function (s) {
-      if (seen[s.id] && !current) current = s.id;
+    entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+    var at = null;
+    sections.forEach(function (s) { if (visible[s.id] && !at) at = s.id; });
+    for (var id in links) links[id].classList.toggle("at", id === at);
+  }, { rootMargin: "0px 0px -68% 0px" });
+  sections.forEach(function (s) { spy.observe(s); });
+
+  /* ---- Plate I: the key lights the part ------------------------
+     The plate's own interaction. Pointer and keyboard both, because
+     the legend entries are buttons and focus must do what hover does. */
+  var specimen = document.getElementById("specimen");
+  var parts = document.getElementById("parts");
+
+  function light(id) {
+    specimen.classList.toggle("focusing", !!id);
+    [].forEach.call(specimen.querySelectorAll("svg .part"), function (g) {
+      g.classList.toggle("lit", g.id === id);
     });
-    for (var id in links) links[id].classList.toggle("on", id === current);
-  }, { rootMargin: "0px 0px -70% 0px" });
-  [].forEach.call(document.querySelectorAll("main section"), function (s) {
-    spy.observe(s);
+    [].forEach.call(parts.querySelectorAll("button"), function (b) {
+      b.classList.toggle("lit", b.dataset.part === id);
+    });
+  }
+
+  ["mouseover", "focusin"].forEach(function (ev) {
+    parts.addEventListener(ev, function (e) {
+      var b = e.target.closest("button");
+      if (b) light(b.dataset.part);
+    });
+  });
+  ["mouseleave", "focusout"].forEach(function (ev) {
+    parts.addEventListener(ev, function () { light(null); });
   });
 
-  /* ---- masthead lattice ----------------------------------------
-     A cage bar running the fiber wave: contraction along the fiber,
-     a volume-preserving bulge sideways, and the contralateral quarter
-     cycle that Bend adds. Edges are shaded by their own stretch ratio,
-     which is exactly what False Color displays.
-     -------------------------------------------------------------- */
-  var cv = document.getElementById("lattice");
+  /* leader lines draw in once, as the plate is uncovered */
+  if (!reduced) {
+    [].forEach.call(specimen.querySelectorAll(".leader"), function (p, i) {
+      var len = p.getTotalLength();
+      p.style.strokeDasharray = len;
+      p.style.strokeDashoffset = len;
+      p.style.transition = "stroke-dashoffset .5s cubic-bezier(.16,1,.3,1) " + (0.35 + i * 0.09) + "s";
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { p.style.strokeDashoffset = 0; });
+      });
+    });
+  }
+
+  /* ---- Plate IV: the travelling contraction --------------------
+     Contraction along the fiber, the volume-preserving bulge, and
+     Bend's contralateral quarter cycle. Edges shaded by their own
+     stretch ratio. */
+  var cv = document.getElementById("wave");
   var ctx = cv.getContext("2d");
-  var still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  var NX = 34, NY = 4;              // nodes along the bar, and across it
-  var LAMBDA = 0.34;                // wavelength as a fraction of the bar
-  var SPEED = 0.28, AMP = 0.34, BEND = 1.0;
-
-  function css(name) {
-    return getComputedStyle(document.body).getPropertyValue(name).trim();
-  }
-
-  function mix(a, b, t) {
-    return [
-      Math.round(a[0] + (b[0] - a[0]) * t),
-      Math.round(a[1] + (b[1] - a[1]) * t),
-      Math.round(a[2] + (b[2] - a[2]) * t)
-    ];
-  }
-
-  function hex(h) {
-    h = h.replace("#", "");
-    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-  }
+  var NX = 40, NY = 5;
+  var LAMBDA = 0.32, SPEED = 0.26, AMP = 0.36, BEND = 1.0;
 
   var pts = new Float32Array(NX * NY * 2);
   var rest = new Float32Array(NX * NY * 2);
 
   function build(t, w, h) {
-    var padX = 26, padY = 30;
+    var padX = 30, padY = 34;
     var spanX = w - padX * 2, spanY = h - padY * 2;
     for (var j = 0; j < NY; j++) {
       for (var i = 0; i < NX; i++) {
         var k = (j * NX + i) * 2;
         var fx = i / (NX - 1);
-        var side = NY > 1 ? (j / (NY - 1)) * 2 - 1 : 0;   // -1 .. 1 across
+        var side = (j / (NY - 1)) * 2 - 1;
         rest[k] = padX + fx * spanX;
         rest[k + 1] = padY + (side * 0.5 + 0.5) * spanY;
 
         var u = fx / LAMBDA - t * SPEED + BEND * 0.25 * side;
         var a = AMP * 0.5 * (1 - Math.cos(2 * Math.PI * u));
-        // Displacement whose gradient is the contraction: shortens at
-        // the crest and lets the material pile up either side of it.
+        // a displacement whose gradient is the contraction: material
+        // shortens at the crest and piles up either side of it
         var dx = -(AMP * LAMBDA / (2 * Math.PI)) * Math.sin(2 * Math.PI * u) * spanX;
-        var bulge = 1 + a * 0.85;
         pts[k] = rest[k] + dx;
-        pts[k + 1] = padY + (side * 0.5 * bulge + 0.5) * spanY;
+        pts[k + 1] = padY + (side * 0.5 * (1 + a * 0.9) + 0.5) * spanY;
       }
     }
   }
 
-  function seg(k1, k2, cold, warm, mid) {
+  function tok(name) {
+    return getComputedStyle(document.body).getPropertyValue(name).trim();
+  }
+
+  function rgb(h) {
+    h = h.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function lerp(a, b, t) {
+    return "rgb(" + Math.round(a[0] + (b[0] - a[0]) * t) + "," +
+                    Math.round(a[1] + (b[1] - a[1]) * t) + "," +
+                    Math.round(a[2] + (b[2] - a[2]) * t) + ")";
+  }
+
+  function edge(k1, k2, cold, mid, hot) {
     var dx = pts[k1] - pts[k2], dy = pts[k1 + 1] - pts[k2 + 1];
     var rx = rest[k1] - rest[k2], ry = rest[k1 + 1] - rest[k2 + 1];
-    var len = Math.hypot(dx, dy), r0 = Math.hypot(rx, ry) || 1;
-    var s = len / r0;                                   // stretch ratio
-    var t = Math.max(0, Math.min(1, (s - 0.72) / 0.56));
-    var c = t < 0.5 ? mix(cold, mid, t * 2) : mix(mid, warm, (t - 0.5) * 2);
-    ctx.strokeStyle = "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
-    ctx.lineWidth = 1.1;
+    var s = Math.hypot(dx, dy) / (Math.hypot(rx, ry) || 1);
+    var t = Math.max(0, Math.min(1, (s - 0.7) / 0.6));
+    ctx.strokeStyle = t < 0.5 ? lerp(cold, mid, t * 2) : lerp(mid, hot, (t - 0.5) * 2);
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(pts[k1], pts[k1 + 1]);
     ctx.lineTo(pts[k2], pts[k2 + 1]);
@@ -1434,31 +1634,31 @@ blender -b --factory-startup --python tests/blender/run_tests.py</code></pre>
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    var cold = hex(css("--accent"));
-    var warm = hex(css("--hot"));
-    var mid = hex(css("--ink-3"));
+    var cold = rgb(tok("--ochre-dim")),
+        mid = rgb(tok("--ink-3")),
+        hot = rgb(tok("--carmine"));
 
-    build(still ? 1.9 : (now - t0) / 1000, w, h);
+    build(reduced ? 1.85 : (now - t0) / 1000, w, h);
 
     for (var j = 0; j < NY; j++) {
       for (var i = 0; i < NX; i++) {
         var k = (j * NX + i) * 2;
-        if (i < NX - 1) seg(k, k + 2, cold, warm, mid);
-        if (j < NY - 1) seg(k, k + NX * 2, cold, warm, mid);
-        if (i < NX - 1 && j < NY - 1) seg(k, k + NX * 2 + 2, cold, warm, mid);
+        if (i < NX - 1) edge(k, k + 2, cold, mid, hot);
+        if (j < NY - 1) edge(k, k + NX * 2, cold, mid, hot);
+        if (i < NX - 1 && j < NY - 1) edge(k, k + NX * 2 + 2, cold, mid, hot);
       }
     }
 
-    ctx.fillStyle = css("--ink-3");
+    ctx.fillStyle = tok("--ink-3");
     for (var n = 0; n < NX * NY; n++) {
       ctx.fillRect(pts[n * 2] - 1, pts[n * 2 + 1] - 1, 2, 2);
     }
 
-    if (!still) requestAnimationFrame(draw);
+    if (!reduced) requestAnimationFrame(draw);
   }
 
-  if (still) draw(t0); else requestAnimationFrame(draw);
-  addEventListener("resize", function () { if (still) draw(t0); });
+  if (reduced) { draw(t0); addEventListener("resize", function () { draw(t0); }); }
+  else requestAnimationFrame(draw);
 })();
 </script>
 </body>
