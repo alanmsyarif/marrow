@@ -129,3 +129,46 @@ def test_substeps_setting_is_honoured():
     assert not np.allclose(slow.frame_positions(3), fast.frame_positions(3), atol=1e-6), (
         "substep count had no effect on the result"
     )
+
+
+def test_an_adaptive_cage_from_an_older_version_is_refused():
+    """Cages the removed octree built carry hanging nodes at every
+    fine-to-coarse face, held together by a blend pass that no longer
+    exists. Running one anyway does not degrade gracefully - the unglued
+    nodes drift off and the cage tears itself apart, which reads as a solver
+    bug rather than a stale file. Refusing names the fix instead.
+    """
+    from marrow.blender.session import find_cage
+    from marrow.blender.storage import BLEND_KEY, BLEND_W_KEY, has_legacy_blend
+
+    obj = _tetrahedralised_cube()
+    cage = find_cage(obj)
+    assert not has_legacy_blend(cage.data), "a fresh cage has no glue rows"
+
+    # Exactly what an adaptive cage left on disk.
+    cage.data[BLEND_KEY] = [0, 1, 2, 3, 4]
+    cage.data[BLEND_W_KEY] = [0.25, 0.25, 0.25, 0.25]
+    assert has_legacy_blend(cage.data)
+
+    try:
+        MarrowSession(obj)
+    except ValueError as exc:
+        assert "Tetrahedralize" in str(exc), f"no fix offered: {exc}"
+    else:
+        raise AssertionError("an adaptive cage should be refused, not simulated")
+
+
+def test_re_tetrahedralizing_clears_the_old_glue_rows():
+    """The way out has to actually work: a rebuild must leave no trace of the
+    old cage behind, or the refusal would be permanent."""
+    from marrow.blender.session import find_cage
+    from marrow.blender.storage import BLEND_KEY, BLEND_W_KEY, has_legacy_blend
+
+    obj = _tetrahedralised_cube()
+    cage = find_cage(obj)
+    cage.data[BLEND_KEY] = [0, 1, 2, 3, 4]
+    cage.data[BLEND_W_KEY] = [0.25, 0.25, 0.25, 0.25]
+
+    assert bpy.ops.marrow.tetrahedralize() == {"FINISHED"}
+    assert not has_legacy_blend(find_cage(obj).data)
+    MarrowSession(obj)  # builds without raising

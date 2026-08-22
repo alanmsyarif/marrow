@@ -14,7 +14,13 @@ limit.
 import numpy as np
 from mathutils import Matrix
 
-from ..blender.storage import TETS_KEY, read_bind, read_blend, read_fiber, read_tetmesh
+from ..blender.storage import (
+    TETS_KEY,
+    has_legacy_blend,
+    read_bind,
+    read_fiber,
+    read_tetmesh,
+)
 from ..core.solver_ref import SolverParams
 from ..core.tetmesh import MASS_DENSITY, node_volumes
 from ..gpu.solver import GPUSolver, MarrowNaNError
@@ -118,9 +124,16 @@ class MarrowSession:
             )
 
         self.tetmesh = tetmesh
-        # None on a uniform cage - the solver then allocates nothing for the
-        # blend pass and stays bit-identical to before adaptive existed.
-        self.blend_rows = read_blend(cage_obj.data)
+        # An adaptive cage carries hanging nodes that only the blend pass
+        # could hold together, and that pass is gone. Refusing is the honest
+        # answer: without the glue those nodes are free, and the cage comes
+        # apart on the first substep in a way that looks like a solver bug.
+        if has_legacy_blend(cage_obj.data):
+            raise ValueError(
+                f"{obj.name!r} has an adaptive cage, which Marrow no longer "
+                f"supports - the uniform cage covers thin features now and "
+                f"costs fewer nodes. Run Tetrahedralize again to rebuild it."
+            )
         # None on a cage tetrahedralized without a fiber curve. The solver
         # allocates a blank row per tet either way, so the fiber pass is
         # dead rather than absent.
@@ -292,7 +305,6 @@ class MarrowSession:
             friction=self.friction,
             attach_stiffness=attach_stiffness,
             attach_targets=attach_targets,
-            blend_rows=self.blend_rows,
             pin_kinematic=self.pin_kinematic,
             fiber=self.fiber,
             region=self.region,

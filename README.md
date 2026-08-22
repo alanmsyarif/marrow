@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-1.11.0.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.0.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -58,17 +58,9 @@ A cube pays nothing - its cells already cover it. Curved and thin shapes pay 15-
 
 This is not only a thin-feature fix. Half the surface vertices of any curved mesh used to sit outside the cage and be clipped onto it rather than interpolated inside it.
 
-**This applies to the uniform cage, not to Adaptive.** The octree refines on the same centre-inside question, so an adaptive cage still loses whatever is thinner than **Min Size** - which makes uniform the better choice for coverage now, and Adaptive the better one for spending nodes where a body has genuine bulk. Measured on that tentacle at Resolution 0.05: uniform covered it outright, while Adaptive at Min Size 0.0125 still left the last 0.10 m uncovered and stranded 3.3% of vertices, because the tip tapers below Min Size.
+This replaced an **Adaptive** octree cage that used to live in the Cage box. Its job was to spend fine cells only where a shape is thin, and vertex cells do that job for nothing - so it was measured against the uniform fill it was built to beat and lost on every axis. On a solid sphere at its own best settings it wanted 31,726 nodes against 23,871 for a uniform cage at the same surface size, took 5x as long to build, and left 49% of render vertices outside the cage because the octree never got vertex cells of its own. It is gone, along with the hanging-node blend pass that existed only to hold its cages together. **A .blend saved with an adaptive cage is refused with a message asking for a rebuild** rather than simulated without that glue, which would quietly tear the cage apart.
 
 **Existing cages keep the old behaviour until you Tetrahedralize again.**
-
-### Adaptive cages
-
-Uniform cages resolve the thinnest feature they must capture and pay for it everywhere: a walking character whose ankles need 0.03 cells pays 0.03 through the whole torso, roughly (0.25/0.03)³ ≈ 580x the nodes. **Adaptive**, in the Cage box, replaces the uniform grid with an octree that refines towards the surface - **Resolution** stays the coarse bulk cell size, **Min Size** is how small cells get. One rule gives three behaviours: a boundary layer at Min Size everywhere on the surface, thin features filled at Min Size so they keep at least two cells across, and deep interior left at Resolution. Where fine cells meet coarser ones, the extra face nodes are glued to the coarse face by bilinear interpolation, so the cage bends as one piece.
-
-Adaptive keeps a cell on the same centre-inside test the uniform fill uses, but **without** the vertex cells described in [Cage coverage](#cage-coverage) - so it resolves down to Min Size and loses anything thinner, where the uniform cage now covers whatever the mesh has vertices in at any Resolution. Reach for Adaptive to spend nodes where a body has bulk to leave coarse, not to chase a thin tip.
-
-The trade is the boundary layer: every surface cell sits at Min Size, so an adaptive cage is only cheap where the shape has genuine bulk to leave coarse, and building one takes longer than the uniform fill it replaces. On a chunky cantilever test shape the adaptive cage deflects like the uniform-at-Min-Size one to within 15% at over 4x fewer nodes. Adaptive and uniform cages behave identically once built - same solver, same settings - and Adaptive off stays bit-identical to the old uniform path.
 
 ### Live or Bake
 
@@ -89,8 +81,6 @@ A skip of up to 8 frames is caught up, so playback that drops frames does not st
 | Setting | What it does |
 |---|---|
 | **Resolution** | Cage cell size in world units. Smaller fills finer detail and costs more. See [Cage coverage](#cage-coverage). |
-| **Adaptive** | Follow the surface instead of filling uniformly. See [Adaptive cages](#adaptive-cages). |
-| **Min Size** | Smallest adaptive cell; thin features fill at this size, and anything thinner than it is still missed. Only active with Adaptive. |
 | **Substeps** | XPBD substeps per frame. More is stabler and slower, and this is the most expensive knob here. |
 | **Stiffness** | Resistance to distortion (deviatoric compliance). |
 | **Volume Preservation** | Resistance to volume change (hydrostatic compliance). |
@@ -375,10 +365,10 @@ While stretch display is active a generated emission material sits in slot 0; ch
 | Tet data | Mesh vertices, ID properties and POINT attributes, surviving save and load |
 | Rest shape | A `marrow_rest` POINT attribute, so De-tetrahedralize can undo the whole thing |
 | Pack to textures | CPU to `GPUTexture`, once per simulation start |
-| Solve | GLSL compute, 6 kernels x substeps x constraint colours, plus a hanging-node blend pass between the elastic solve and attachment on adaptive cages |
+| Solve | GLSL compute, 6 kernels x substeps x constraint colours |
 | Skin and readback | GPU blend, then only the render vertices cross PCIe |
 
-The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so thin models need a finer Resolution - or [Adaptive](#adaptive-cages), which puts the fine cells only where the shape is thin.
+The cage uses a **cube-split lattice with checkerboard parity**, not conforming Delaunay. Boundary recovery is fragile on real meshes and replaces the render mesh; this approach never touches your topology and tolerates messy input, because the only question asked of the mesh is inside or outside. The accepted cost is that the cage does not hug concave detail, so a model with deep concavities is filled more generously than it strictly needs.
 
 Tets are graph-coloured at build time so each colour dispatches race-free with no atomics. Interior cage nodes never cross PCIe; only render vertices are read back.
 
@@ -399,7 +389,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
 - **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
-- **Very thin features can still outrun the cage.** The cage keeps every cell whose centre is inside the mesh, plus every cell holding a mesh vertex - so a feature thinner than a cell is covered as long as the mesh carries vertices there, which fixes tentacle tips, fingertips and horns at no change in Resolution. What it does not cover is a large flat triangle spanning cells with no vertex in them, which is a coarse mesh rather than a thin one. Adaptive is not the escape hatch here: its octree asks the same centre-inside question, so it loses whatever is thinner than **Min Size** and gets no vertex cells. Tetrahedralize warns when more than 1% of render vertices land more than a Resolution outside the cage and names how far the worst one is; those vertices are not simulated, they are glued to whichever tet was nearest and dragged by it. Subdivide the mesh, or lower Resolution.
+- **Very thin features can still outrun the cage.** The cage keeps every cell whose centre is inside the mesh, plus every cell holding a mesh vertex - so a feature thinner than a cell is covered as long as the mesh carries vertices there, which fixes tentacle tips, fingertips and horns at no change in Resolution. What it does not cover is a large flat triangle spanning cells with no vertex in them, which is a coarse mesh rather than a thin one. Tetrahedralize warns when more than 1% of render vertices land more than a Resolution outside the cage and names how far the worst one is; those vertices are not simulated, they are glued to whichever tet was nearest and dragged by it. Subdivide the mesh, or lower Resolution.
 - **No plasticity.** Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. `mu` and `lam` vary per tet through a Stiffness Group, but every tet always wants its original shape.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.
 - Measured on the OpenGL backend. Blender is moving to Vulkan, and the kernels need revalidating there.

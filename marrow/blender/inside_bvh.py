@@ -133,31 +133,3 @@ def surface_cells(coords, bounds_min, spacing: float, dims) -> np.ndarray:
     out = np.zeros(tuple(dims), dtype=bool)
     out[cell[:, 0], cell[:, 1], cell[:, 2]] = True
     return out
-
-
-def cell_oracle_from_object(obj):
-    """(bounds_min, oracle) driving the adaptive octree.
-
-    The oracle answers the two questions refinement asks about a cell
-    centre: how far is the surface (BVH nearest point) and which side of
-    it are we on (the three-ray parity vote). Both run in world space,
-    like the uniform mask. Distance to the nearest triangle is exact
-    enough for the refine rule - it only decides cell sizes.
-    """
-    bvh, coords = _world_bvh(obj)
-
-    class _Oracle:
-        bounds_min = coords.min(axis=0)
-        bounds_max = coords.max(axis=0)
-
-        def distance(self, point):
-            location, _normal, _index, dist = bvh.find_nearest(Vector(point))
-            if location is None:
-                return float("inf")
-            return float(dist)
-
-        def inside(self, point):
-            return is_inside(bvh, Vector(point))
-
-    return _Oracle.bounds_min.copy(), _Oracle()
-

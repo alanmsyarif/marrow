@@ -11,9 +11,10 @@ from ..core.tetmesh import TetMesh
 
 TETS_KEY = "marrow_tets"
 COLORS_KEY = "marrow_colors"
-# Adaptive hanging-node glue rows, stored on the CAGE mesh like the tets:
-# indices flat (R*5 ints, [hanging, m0..m3] per row) and weights flat
-# (R*4 floats). Absent on a uniform cage, which has no hanging nodes.
+# Adaptive hanging-node glue rows, from before the adaptive octree was
+# removed. Nothing writes these any more; the names survive so an old cage
+# can be recognised and refused rather than simulated without its glue, and
+# so De-tetrahedralize still cleans them off a mesh that has them.
 BLEND_KEY = "marrow_blend"
 BLEND_W_KEY = "marrow_blend_w"
 # Per-tet fiber rows, stored on the CAGE mesh like the tets: T*5 floats,
@@ -85,21 +86,16 @@ def read_tetmesh(mesh):
     return TetMesh(nodes, tets), colors
 
 
-def write_blend(mesh, blend_idx: np.ndarray, blend_w: np.ndarray) -> None:
-    mesh[BLEND_KEY] = np.asarray(blend_idx, dtype=np.int32).ravel().tolist()
-    mesh[BLEND_W_KEY] = np.asarray(blend_w, dtype=np.float32).ravel().tolist()
+def has_legacy_blend(mesh) -> bool:
+    """Whether this cage was built by the removed adaptive octree.
 
-
-def read_blend(mesh):
-    """Stored glue rows as ``(blend_idx, blend_w)``, or None on a uniform
-    cage. The solver takes None as "no blend pass", bit-identical to before."""
-    if BLEND_KEY not in mesh.keys() or BLEND_W_KEY not in mesh.keys():
-        return None
-    flat = np.array(mesh[BLEND_KEY], dtype=np.int32)
-    idx = flat.reshape(-1, 5) if flat.size else np.zeros((0, 5), dtype=np.int32)
-    weights = np.array(mesh[BLEND_W_KEY], dtype=np.float32).astype(np.float64)
-    w = weights.reshape(-1, 4) if weights.size else np.zeros((0, 4), dtype=np.float64)
-    return idx, w
+    Those cages have hanging nodes at every fine-to-coarse face, held in
+    place by a blend pass that no longer exists. Simulating one without the
+    glue does not degrade gracefully - the free nodes drift off and the cage
+    tears itself apart - so the session refuses and asks for a rebuild.
+    """
+    keys = mesh.keys()
+    return BLEND_KEY in keys or BLEND_W_KEY in keys
 
 
 def write_fiber(mesh, fiber: np.ndarray) -> None:

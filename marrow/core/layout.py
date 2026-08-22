@@ -97,25 +97,6 @@ def pack_tets(tets: np.ndarray) -> np.ndarray:
     return image
 
 
-def pack_blend(blend_idx: np.ndarray, blend_w: np.ndarray) -> np.ndarray:
-    """Two texels per glue row: 2r = (h, m0, m1, m2), 2r+1 = (m3, w0, w1, w2).
-
-    The fourth master weight is recovered in the kernel as the remainder of
-    the sum, so a row costs seven floats instead of eight. Indices ride as
-    floats like tet indices, exact below 2**24.
-    """
-    idx = np.asarray(blend_idx, dtype=np.int64)
-    w = np.asarray(blend_w, dtype=np.float64)
-    n_rows = idx.shape[0]
-    image = _blank(2 * n_rows)
-    values = np.zeros((2 * n_rows, 4), dtype=np.float64)
-    values[0::2, :] = idx[:, :4]
-    values[1::2, 0] = idx[:, 4]
-    values[1::2, 1:4] = w[:, :3]
-    _write(image, values.astype(np.float32))
-    return image
-
-
 def pack_rest(dm_inv: np.ndarray, rest_vol: np.ndarray) -> np.ndarray:
     """Three texels per tet: texel 3t+j is column j of dm_inv[t].
 
@@ -140,7 +121,7 @@ def pack_fiber(fiber: np.ndarray) -> np.ndarray:
     """Two texels per tet: 2t is (direction xyz, arclength), 2t+1 is (side).
 
     Five floats, so it does not fit one RGBA texel. Two texels of one image
-    rather than a second image, the same trade pack_rest and pack_blend
+    rather than a second image, the same trade pack_rest
     already make: a compute shader here gets eight image units and the solve
     kernel is at seven, so the last one is worth more than the texels this
     wastes.

@@ -67,9 +67,9 @@ class _TetGrid:
     lookup exact with a single cell read: a tet can then straddle at most two
     cells per axis, it is registered in every cell it touches, so any tet
     whose box covers the query point is registered in the point's own cell.
-    An adaptive cage of mixed sizes is bounded by its coarsest tet and so
-    gets a coarser grid than its fine region would like - still bounded work,
-    just less of a win there.
+    A cage of mixed tet sizes is bounded by its coarsest tet and so gets a
+    coarser grid than its fine region would like - still bounded work, just
+    less of a win there.
     """
 
     def __init__(self, nodes: np.ndarray, tets: np.ndarray):

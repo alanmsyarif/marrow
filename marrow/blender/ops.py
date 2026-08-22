@@ -7,7 +7,7 @@ import numpy as np
 
 from ..blender import false_color, group, handlers
 from ..blender.curve import polyline_from_curve
-from ..blender.inside_bvh import cell_mask_iter, cell_oracle_from_object
+from ..blender.inside_bvh import cell_mask_iter
 from ..blender import session as session_mod
 from ..blender.session import CAGE_SUFFIX, MarrowSession, find_cage
 from ..blender.storage import (
@@ -16,12 +16,10 @@ from ..blender.storage import (
     clear_marrow_data,
     restore_rest,
     write_bind,
-    write_blend,
     write_fiber,
     write_rest,
     write_tetmesh,
 )
-from ..core.adaptive import build_adaptive_lattice
 from ..core.bind import bind_points_iter, bind_slip
 from ..core.coloring import color_sets_iter
 from ..core.fiber import fiber_from_polyline, tet_centroids
@@ -176,34 +174,15 @@ def _tetrahedralize_iter(context, obj):
         m.show_viewport = False
     try:
         context.view_layer.update()
-        blend_rows = None
-        if obj.marrow.adaptive:
-            # The octree follows the surface: boundary layer and thin
-            # features at Min Size, bulk at Resolution.
-            # ponytail: the octree build is one blocking call, so this stage
-            # shows a label but no motion. Chunk it if adaptive cages start
-            # taking long enough to look hung.
-            yield "building octree", 0.0
-            bounds_min, oracle = cell_oracle_from_object(obj)
-            tetmesh, blend_idx, blend_w = build_adaptive_lattice(
-                spacing, float(obj.marrow.min_resolution), oracle
+        mask, bounds_min = yield from _stage(
+            "voxelising", cell_mask_iter(obj, spacing)
+        )
+        if not mask.any():
+            raise _Abort(
+                "No cells inside the mesh. Lower Resolution in the Marrow "
+                "panel until the cage fills the object."
             )
-            if tetmesh.n_nodes == 0:
-                raise _Abort(
-                    "No cells inside the mesh. Lower Resolution in the "
-                    "Marrow panel until the cage fills the object."
-                )
-            blend_rows = (blend_idx, blend_w)
-        else:
-            mask, bounds_min = yield from _stage(
-                "voxelising", cell_mask_iter(obj, spacing)
-            )
-            if not mask.any():
-                raise _Abort(
-                    "No cells inside the mesh. Lower Resolution in the Marrow "
-                    "panel until the cage fills the object."
-                )
-            tetmesh = build_lattice(bounds_min, spacing, mask)
+        tetmesh = build_lattice(bounds_min, spacing, mask)
 
         try:
             tetmesh.validate()
@@ -261,8 +240,6 @@ def _tetrahedralize_iter(context, obj):
 
     cage_mesh = bpy.data.meshes.new(cage_name)
     write_tetmesh(cage_mesh, tetmesh, colors)
-    if blend_rows is not None:
-        write_blend(cage_mesh, *blend_rows)
     if fiber_rows is not None:
         write_fiber(cage_mesh, fiber_rows)
 
@@ -290,8 +267,6 @@ def _tetrahedralize_iter(context, obj):
         f"Marrow: {tetmesh.n_tets} tets, {tetmesh.n_nodes} nodes, "
         f"{int(colors.max()) + 1 if colors.size else 0} colours"
     )
-    if blend_rows is not None:
-        message += f", {blend_rows[0].shape[0]} blend rows"
 
     # Geometry the cage never reached. Silent until now: those vertices are
     # glued to whichever tet was nearest and ride it, so a thin tip stops

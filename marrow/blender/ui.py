@@ -127,27 +127,6 @@ class MarrowSettings(bpy.types.PropertyGroup):
         soft_max=1.0,
         unit="LENGTH",
     )
-    adaptive: bpy.props.BoolProperty(
-        name="Adaptive",
-        description=(
-            "Follow the surface: cells shrink towards the mesh and through "
-            "thin features while the deep bulk stays coarse. Costs more time "
-            "to build and needs a boundary layer at Min Size everywhere on "
-            "the surface"
-        ),
-        default=False,
-    )
-    min_resolution: bpy.props.FloatProperty(
-        name="Min Size",
-        description=(
-            "Smallest adaptive cell. Thin features fill at this size, so "
-            "they get at least two cells across"
-        ),
-        default=0.03,
-        min=0.001,
-        soft_max=0.25,
-        unit="LENGTH",
-    )
     live_enabled: bpy.props.BoolProperty(
         name="Live",
         description=(
@@ -521,10 +500,6 @@ class MARROW_PT_panel(bpy.types.Panel):
         cage = layout.box()
         cage.label(text="Cage")
         cage.prop(settings, "resolution")
-        cage.prop(settings, "adaptive")
-        row = cage.row()
-        row.enabled = settings.adaptive
-        row.prop(settings, "min_resolution")
         cage.operator("marrow.tetrahedralize", icon="MESH_ICOSPHERE")
 
         if _cage_of(context) is None:
