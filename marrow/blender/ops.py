@@ -6,7 +6,7 @@ import bpy
 import numpy as np
 from mathutils import Vector
 
-from ..blender import false_color, group, handlers
+from ..blender import cache, false_color, group, handlers
 from ..blender.curve import polyline_from_curve
 from ..blender.inside_bvh import cell_mask_iter
 from ..blender import session as session_mod
@@ -373,6 +373,9 @@ class MARROW_OT_detetrahedralize(bpy.types.Operator):
             obj.marrow.attach_enabled = False
 
         remove_cage(obj)
+        # The cage it was baked against is going, so the sidecar can only be
+        # stale from here - and load refuses a stale one anyway.
+        cache.remove(obj)
         restored = restore_rest(obj.data)
         clear_marrow_data(obj.data)
         false_color.clear_attribute(obj.data)
@@ -655,9 +658,14 @@ class MARROW_OT_free(bpy.types.Operator):
         obj = context.active_object
         name = obj.name if obj is not None else None
         session = handlers.SESSIONS.pop(name, None)
+        # The sidecar goes with it. Leaving it would have the next session
+        # load back the bake that was just discarded.
+        on_disk = cache.remove(obj) if obj is not None else False
         if session is not None:
             session.free()
             self.report({"INFO"}, "Marrow: bake freed")
+        elif on_disk:
+            self.report({"INFO"}, "Marrow: cached bake removed")
         else:
             self.report({"INFO"}, "Marrow: nothing baked")
         return {"FINISHED"}

@@ -193,6 +193,14 @@ def test_opening_a_saved_file_drops_them_too():
         bpy.ops.wm.read_factory_settings(use_empty=True)
         if os.path.exists(path):
             os.remove(path)
+        # Saving writes a bake sidecar beside the file. Leaving one in the
+        # temp directory would be a cache a later test could load.
+        import shutil
+
+        folder = os.path.join(
+            os.path.dirname(path), "blendcache_marrow_session_guard"
+        )
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def test_the_handler_survives_a_load():

@@ -154,6 +154,12 @@ class MarrowSession:
         self.sim_world = np.eye(4)
         self.bind_idx, self.bind_w = read_bind(obj.data)
         self._build_solver()
+        # A bake written beside the .blend, if there is one that still fits
+        # this cage. Reopening a file used to mean playing the whole shot
+        # again; this is what makes a bake outlive the session that made it.
+        from . import cache
+
+        cache.load(self, obj)
 
     def _collider_specs(self):
         """(kind, to_local, to_world, sticky, field, friction) at this frame.

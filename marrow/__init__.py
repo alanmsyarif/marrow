@@ -71,10 +71,14 @@ def register():
     # Sessions are keyed by object name and outlive the file that built them,
     # so a load has to clear them or the next file inherits the last one's
     # GPU state along with its textures.
-    from .blender.handlers import free_on_load
+    from .blender.handlers import free_on_load, save_caches
 
     if free_on_load not in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(free_on_load)
+    # Bakes are written beside the .blend rather than into it - see
+    # blender/cache.py for why.
+    if save_caches not in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.append(save_caches)
     _registered[:] = classes
 
 
@@ -93,10 +97,12 @@ def unregister():
     while migrate_collider_slots in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(migrate_collider_slots)
 
-    from .blender.handlers import free_on_load
+    from .blender.handlers import free_on_load, save_caches
 
     while free_on_load in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(free_on_load)
+    while save_caches in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.remove(save_caches)
 
     del bpy.types.Object.marrow_collider
     del bpy.types.Object.marrow

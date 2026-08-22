@@ -9,7 +9,7 @@ Blender 5.2 ships XPBD for hair, cloth and particles. There is no volumetric sof
 ## Install
 
 ```
-blender --command extension install-file -r user_default --enable dist/marrow-2.4.1.zip
+blender --command extension install-file -r user_default --enable dist/marrow-2.5.0.zip
 ```
 
 Or in Blender: **Edit > Preferences > Get Extensions > Install from Disk**.
@@ -75,6 +75,18 @@ Moving the playhead **before the start frame** resets a live body: the cache is 
 Turning **Live** off stops simulation entirely for that object.
 
 A skip of up to 8 frames is caught up, so playback that drops frames does not stall. A larger jump plays whatever is cached and otherwise leaves the mesh where it is, because chasing hundreds of frames inside a frame handler would lock the UI. A body that has never simulated is the exception: with no history to protect, the first jump catches up from the start frame in one go, so pressing play mid-timeline just works.
+
+### Baked caches on disk
+
+A bake survives closing the file. It is written to a `blendcache_<name>` folder beside the .blend when you save - the same convention Blender's own point caches use, and for the same reason: a bake of a real body is hundreds of megabytes of float, and putting that inside the .blend would make every save carry it.
+
+Only the cage node positions are stored. Render positions are barycentric combinations of them and rebuild exactly on load - measured at 1.4e-7 against what the skin kernel produced - so storing both would be storing the same thing twice. On a body with more render vertices than cage nodes, which is the usual shape of things, that is the smaller half.
+
+**Only bakes are written.** A live cache is disposable by design and is rebuilt as the timeline plays, so writing it on every save would be pure cost.
+
+Reopening validates before trusting: the stored vertex count, tet count and node count all have to match the cage that exists now. Editing the mesh or re-tetrahedralizing leaves a cache that would unpack into the wrong shapes, and playing that back would look like a solver fault rather than a stale file, so it is refused and the body comes back unbaked.
+
+**Free** deletes the sidecar along with the in-memory cache, and so does De-tetrahedralize. Leaving the file behind would have the next session load back the bake you just discarded. An unsaved .blend has nowhere to put one, so nothing is written until the file has a path.
 
 ## Settings
 
@@ -412,7 +424,7 @@ Cost scales sharply with Resolution: halving it is roughly eight times the cage.
 - **A deforming collider is baked once**, and features thinner than one SDF cell are missed. See [Colliders](#colliders).
 - **Friction does not ride a moving collider.** Contact friction resists sliding, but it measures the node against a collider treated as still for the substep, so a plate sliding sideways under a body does not drag it along. Sticky is how a moving collider carries material. Self-collision and body-to-body both measure the pair properly and have no such limit.
 - **A body must not start inside a sticky collider.** See [Sticky colliders](#sticky-colliders). Only the ground plane depenetrates its starting state.
-- **The cache lives in memory, not in the .blend.** Reopening a file means playing again from the start; live rebuilds the cache as you go.
+- **A live cache lives only in memory.** Bakes are written beside the .blend and reload with it; a live cache is rebuilt as the timeline plays, which is what makes it free to throw away. See [Baked caches on disk](#baked-caches-on-disk).
 - **Very thin features can still outrun the cage.** The cage keeps every cell whose centre is inside the mesh, plus every cell holding a mesh vertex - so a feature thinner than a cell is covered as long as the mesh carries vertices there, which fixes tentacle tips, fingertips and horns at no change in Resolution. What it does not cover is a large flat triangle spanning cells with no vertex in them, which is a coarse mesh rather than a thin one. Tetrahedralize warns when more than 1% of render vertices land more than a Resolution outside the cage and names how far the worst one is; those vertices are not simulated, they are glued to whichever tet was nearest and dragged by it. Subdivide the mesh, or lower Resolution.
 - **No plasticity.** Deformation is purely elastic: the rest shape is baked once and never drifts, so a dent springs back rather than staying dented. `mu` and `lam` vary per tet through a Stiffness Group, but every tet always wants its original shape.
 - **Attachment weights are synthesized once**, against the rest shape. Editing the mesh without re-tetrahedralizing leaves them stale, same rule as the bind data.

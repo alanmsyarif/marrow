@@ -111,6 +111,27 @@ def free_all() -> None:
 
 
 @bpy.app.handlers.persistent
+def save_caches(*_args):
+    """Write every baked session beside the .blend, on save.
+
+    Live caches are skipped - they are disposable by design and rebuilt as
+    the timeline plays. A bake is something the user waited for, so it is
+    the one worth the disk.
+    """
+    from . import cache
+
+    for name, session in list(SESSIONS.items()):
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        try:
+            cache.save(session, obj)
+        except OSError:
+            # A read-only or full drive must not fail the save itself.
+            pass
+
+
+@bpy.app.handlers.persistent
 def free_on_load(*_args):
     """Drop every session when a file is loaded. Registered on load_pre.
 
